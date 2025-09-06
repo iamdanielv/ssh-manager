@@ -1,14 +1,27 @@
-# SSH Manager 🔑
+# 🔑 SSH Manager
 
-An interactive TUI for managing and connecting to SSH hosts defined in `~/.ssh/config`.
+A user-friendly, interactive TUI for managing your `~/.ssh/config` file.
 
-## Features
+## 🧠 About
 
-- Connect, test, add, edit, rename, clone, reorder, and remove hosts.
-- Generate new SSH keys and copy them to servers (`ssh-copy-id`).
-- Backup, import, and export host configurations.
-- Interactively re-order hosts in your config file.
-- Edit host blocks directly in your `$EDITOR`.
+SSH Manager provides a simple and robust terminal interface for all your common SSH configuration tasks. It's designed to be a powerful alternative to manually editing your `~/.ssh/config` file, reducing errors and saving time.
+
+It is a single, self-contained `bash` script with no external dependencies beyond standard command-line tools, making it highly portable and easy to use anywhere.
+
+## 🧩 Features
+
+- **Full Host Management**: Interactively connect, add, edit, rename, clone, and remove hosts.
+- **Connection Testing**: Test connectivity to a single host or all hosts in parallel.
+- **Key Management**: Generate new SSH key pairs (ed25519 or RSA) and copy public keys to a server with `ssh-copy-id`.
+- **Safe File Operations**:
+  - Re-order hosts in your config file.
+  - Edit host blocks directly in your default `$EDITOR`.
+  - Automatically backs up your config file before destructive operations.
+- **Import/Export**: Easily export selected host configurations to a file or import them into your main config.
+- **Smart & Safe**:
+  - Reliably parses your config using `ssh -G`.
+  - Offers to clean up orphaned key files when hosts are removed or edited.
+  - Uses `awk` for safe, non-destructive file modifications.
 
 ## Quick Actions
 
@@ -19,27 +32,46 @@ Bypass the interactive menus for quick, direct actions:
 - `-t, --test [host|all]`: Test connection to a specific host, all hosts, or show the selection menu.
 - `-h, --help`: Show the help message.
 
-## Usage
+## Installation
 
 1. Download the `ssh-manager.sh` script.
-2. Make the main script executable:
+2. Make it executable:
 
     ```bash
     chmod +x ssh-manager.sh
     ```
 
-3. Run the script:
+3. Run it:
 
     ```bash
     ./ssh-manager.sh
     ```
 
-    For convenience, you can place it in a directory in your `PATH` (e.g., `~/.local/bin`).
+    For convenience, place it in a directory that is in your `PATH` (e.g., `~/.local/bin` or `/usr/local/bin`) to run it from anywhere.
 
-## Contributing
+    ```bash
+    # Example:
+    sudo mv ssh-manager.sh /usr/local/bin/ssh-manager
+    ssh-manager # Now you can run it like this
+    ```
 
-Contributions of bug fixes, improvements, and documentation are welcome!
+## Dependencies
 
-## License
+The script relies on a set of common command-line tools that are pre-installed on most Linux and macOS systems:
 
-MIT License
+`ssh`, `ssh-keygen`, `ssh-copy-id`, `awk`, `cat`, `grep`, `rm`, `mktemp`, `cp`, `date`
+
+## 🤝 Contributing
+
+I'm open to and encourage contributions of bug fixes, improvements, and documentation!
+
+## 📜 License
+
+[MIT License](LICENSE) - See the `LICENSE` file for details.
+
+## 📧 Contact
+
+Let me know if you have any questions.
+
+- [Twitter](https://twitter.com/IAmDanielV)
+- [BlueSky](https://bsky.app/profile/iamdanielv.bsky.social)
