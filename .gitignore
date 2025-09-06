@@ -1,0 +1,10 @@
+# IDE files
+.idea/
+.vscode/
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+/test/mock_*
