@@ -4,7 +4,7 @@
 # The return value of a pipeline is the status of the last command to exit with a non-zero status.
 set -o pipefail
 
-# --- Shared Utilities (from shared.sh) ---
+# --- Shared Utilities ---
 
 # --- Colors and Styles ---
 export C_RED='\e[31m'
