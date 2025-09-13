@@ -2072,52 +2072,71 @@ _draw_edit_port_forward_details() {
     printMsg "${C_GRAY}${DIV}${T_RESET}"
 }
 
-# Edits a saved port forward configuration.
-edit_saved_port_forward() {
-    local idx_to_edit="$1"
-    local -a all_types all_specs all_hosts all_descs; _get_saved_port_forwards all_types all_specs all_hosts all_descs
-    local original_type="${all_types[$idx_to_edit]}" original_spec="${all_specs[$idx_to_edit]}" original_host="${all_hosts[$idx_to_edit]}" original_desc="${all_descs[$idx_to_edit]}"
-    local new_type="$original_type" new_host="$original_host" new_desc="$original_desc"
-    local p1="${original_spec%%:*}"
-    local remote_part="${original_spec#*:}"
-    local h="${remote_part%:*}"
-    local p2="${remote_part##*:}"
+# (Private) A generic, reusable interactive loop for the port forward editors.
+# This function encapsulates the shared UI loop for editing and cloning forwards.
+#
+# It modifies variables in the caller's scope via namerefs.
+#
+# Usage: _interactive_port_forward_editor_loop <banner> <p_type> <p_p1> <p_h> <p_p2> <p_host> <p_desc>
+# Returns 0 if the user chooses to save, 1 if they cancel/quit.
+_interactive_port_forward_editor_loop() {
+    local banner_text="$1"
+    # These are the *names* of the variables in the caller's scope.
+    local p_type="$2" p_p1="$3" p_h="$4" p_p2="$5" p_host="$6" p_desc="$7"
+    # Use namerefs internally for easier access to the values.
+    local -n n_type="$p_type" n_p1="$p_p1" n_h="$p_h" n_p2="$p_p2" n_host="$p_host" n_desc="$p_desc"
 
     while true; do
-        clear; printBanner "Edit Saved Port Forward - ${C_L_CYAN}${original_desc}${C_BLUE}"
-        _draw_edit_port_forward_details "$new_type" "$p1" "$h" "$p2" "$new_host" "$new_desc"
+        clear; printBanner "$banner_text"
+        _draw_edit_port_forward_details "$n_type" "$n_p1" "$n_h" "$n_p2" "$n_host" "$n_desc"
+
         local p1_label="Local Port" h_label="Remote Host" p2_label="Remote Port"
-        if [[ "$new_type" == "Remote" ]]; then
-            p1_label="Remote Port"; h_label="Local Host"; p2_label="Local Port"
-        fi
+        if [[ "$n_type" == "Remote" ]]; then p1_label="Remote Port"; h_label="Local Host"; p2_label="Local Port"; fi
+
         local -a menu_options=( "Edit Type (Local/Remote)" "Edit SSH Host" "Edit ${p1_label}" "Edit ${h_label}" "Edit ${p2_label}" "Edit Description" "Save and Exit" "Cancel" )
         local selected_index; selected_index=$(interactive_single_select_menu "Select a field to edit:" "" "${menu_options[@]}")
-        if [[ $? -ne 0 ]]; then printInfoMsg "Edit cancelled. No changes were saved."; return; fi
+        if [[ $? -ne 0 ]]; then return 1; fi # Cancelled
+
         local selected_option="${menu_options[$selected_index]}"
         case "$selected_option" in
             "Edit Type (Local/Remote)")
                 local -a type_options=("Local (-L)" "Remote (-R)"); local type_idx
                 type_idx=$(interactive_single_select_menu "Select forward type:" "" "${type_options[@]}")
-                if [[ $? -eq 0 ]]; then if [[ "$type_idx" -eq 0 ]]; then new_type="Local"; else new_type="Remote"; fi; fi ;;
+                if [[ $? -eq 0 ]]; then if [[ "$type_idx" -eq 0 ]]; then n_type="Local"; else n_type="Remote"; fi; fi ;;
             "Edit SSH Host")
                 local selected_host; selected_host=$(select_ssh_host "Select a new SSH host:" "false")
-                if [[ $? -eq 0 ]]; then new_host="$selected_host"; fi ;;
-            "Edit ${p1_label}")
-                prompt_for_input "Enter the ${new_type} port to listen on" p1 "$p1" ;;
+                if [[ $? -eq 0 ]]; then n_host="$selected_host"; fi ;;
+            "Edit ${p1_label}") prompt_for_input "Enter the ${n_type} port to listen on" "$p_p1" "$n_p1" ;;
             "Edit ${h_label}")
-                local h_prompt="Enter the REMOTE host to connect to (from ${new_host})"
-                if [[ "$new_type" == "Remote" ]]; then h_prompt="Enter the LOCAL host to connect to"; fi
-                prompt_for_input "$h_prompt" h "$h" ;;
+                local h_prompt="Enter the REMOTE host to connect to (from ${n_host})"; if [[ "$n_type" == "Remote" ]]; then h_prompt="Enter the LOCAL host to connect to"; fi
+                prompt_for_input "$h_prompt" "$p_h" "$n_h" ;;
             "Edit ${p2_label}")
-                local p2_prompt="Enter the REMOTE port to connect to"
-                if [[ "$new_type" == "Remote" ]]; then p2_prompt="Enter the LOCAL port to connect to"; fi
-                prompt_for_input "$p2_prompt" p2 "$p2" ;;
-            "Edit Description")
-                prompt_for_input "Enter a short description" new_desc "$new_desc" ;;
-            "Save and Exit") break ;;
-            "Cancel") printInfoMsg "Edit cancelled. No changes were saved."; return ;;
+                local p2_prompt="Enter the REMOTE port to connect to"; if [[ "$n_type" == "Remote" ]]; then p2_prompt="Enter the LOCAL port to connect to"; fi
+                prompt_for_input "$p2_prompt" "$p_p2" "$n_p2" ;;
+            "Edit Description") prompt_for_input "Enter a short description" "$p_desc" "$n_desc" ;;
+            "Save and Exit") return 0 ;; # Save
+            "Cancel") return 1 ;; # Cancel
         esac
     done
+}
+
+# Edits a saved port forward configuration.
+edit_saved_port_forward() {
+    local idx_to_edit="$1"
+    local -a all_types all_specs all_hosts all_descs; _get_saved_port_forwards all_types all_specs all_hosts all_descs
+    local original_type="${all_types[$idx_to_edit]}" original_spec="${all_specs[$idx_to_edit]}" original_host="${all_hosts[$idx_to_edit]}" original_desc="${all_descs[$idx_to_edit]}"
+
+    # Set up variables for the editor loop
+    local new_type="$original_type" new_host="$original_host" new_desc="$original_desc"
+    local p1="${original_spec%%:*}"; local remote_part="${original_spec#*:}"
+    local h="${remote_part%:*}"; local p2="${remote_part##*:}"
+
+    local banner_text="Edit Saved Port Forward - ${C_L_CYAN}${original_desc}${C_BLUE}"
+    if ! _interactive_port_forward_editor_loop "$banner_text" \
+        new_type p1 h p2 new_host new_desc; then
+        printInfoMsg "Edit cancelled. No changes were saved."
+        return
+    fi
 
     local new_spec="${p1}:${h}:${p2}"
     if [[ "$new_type" == "$original_type" && "$new_spec" == "$original_spec" && "$new_host" == "$original_host" && "$new_desc" == "$original_desc" ]]; then
@@ -2152,51 +2171,19 @@ delete_saved_port_forward() {
 clone_saved_port_forward() {
     local type_to_clone="$1" spec_to_clone="$2" host_to_clone="$3" desc_to_clone="$4"
 
-    # Initialize new values based on the item being cloned
     local new_type="$type_to_clone"
     local new_host="$host_to_clone"
     local new_desc="Clone of ${desc_to_clone}"
-    local p1="${spec_to_clone%%:*}"
-    local remote_part="${spec_to_clone#*:}"
-    local h="${remote_part%:*}"
-    local p2="${remote_part##*:}"
+    local p1="${spec_to_clone%%:*}"; local remote_part="${spec_to_clone#*:}"
+    local h="${remote_part%:*}"; local p2="${remote_part##*:}"
     p1=$((p1 + 1)) # Suggest a new port by default
 
-    while true; do
-        clear; printBanner "Clone Saved Port Forward - from ${C_L_CYAN}${desc_to_clone}${C_BLUE}"
-        _draw_edit_port_forward_details "$new_type" "$p1" "$h" "$p2" "$new_host" "$new_desc"
-        local p1_label="Local Port" h_label="Remote Host" p2_label="Remote Port"
-        if [[ "$new_type" == "Remote" ]]; then
-            p1_label="Remote Port"; h_label="Local Host"; p2_label="Local Port"
-        fi
-        local -a menu_options=( "Edit Type (Local/Remote)" "Edit SSH Host" "Edit ${p1_label}" "Edit ${h_label}" "Edit ${p2_label}" "Edit Description" "Save and Exit" "Cancel" )
-        local selected_index; selected_index=$(interactive_single_select_menu "Select a field to edit:" "" "${menu_options[@]}")
-        if [[ $? -ne 0 ]]; then printInfoMsg "Clone cancelled. No changes were saved."; return; fi
-        local selected_option="${menu_options[$selected_index]}"
-        case "$selected_option" in
-            "Edit Type (Local/Remote)")
-                local -a type_options=("Local (-L)" "Remote (-R)"); local type_idx
-                type_idx=$(interactive_single_select_menu "Select forward type:" "" "${type_options[@]}")
-                if [[ $? -eq 0 ]]; then if [[ "$type_idx" -eq 0 ]]; then new_type="Local"; else new_type="Remote"; fi; fi ;;
-            "Edit SSH Host")
-                local selected_host; selected_host=$(select_ssh_host "Select a new SSH host:" "false")
-                if [[ $? -eq 0 ]]; then new_host="$selected_host"; fi ;;
-            "Edit ${p1_label}")
-                prompt_for_input "Enter the ${new_type} port to listen on" p1 "$p1" ;;
-            "Edit ${h_label}")
-                local h_prompt="Enter the REMOTE host to connect to (from ${new_host})"
-                if [[ "$new_type" == "Remote" ]]; then h_prompt="Enter the LOCAL host to connect to"; fi
-                prompt_for_input "$h_prompt" h "$h" ;;
-            "Edit ${p2_label}")
-                local p2_prompt="Enter the REMOTE port to connect to"
-                if [[ "$new_type" == "Remote" ]]; then p2_prompt="Enter the LOCAL port to connect to"; fi
-                prompt_for_input "$p2_prompt" p2 "$p2" ;;
-            "Edit Description")
-                prompt_for_input "Enter a short description" new_desc "$new_desc" ;;
-            "Save and Exit") break ;;
-            "Cancel") printInfoMsg "Clone cancelled. No changes were saved."; return ;;
-        esac
-    done
+    local banner_text="Clone Saved Port Forward - from ${C_L_CYAN}${desc_to_clone}${C_BLUE}"
+    if ! _interactive_port_forward_editor_loop "$banner_text" \
+        new_type p1 h p2 new_host new_desc; then
+        printInfoMsg "Clone cancelled. No changes were saved."
+        return
+    fi
 
     local new_spec="${p1}:${h}:${p2}"
     local -a all_types all_specs all_hosts all_descs; _get_saved_port_forwards all_types all_specs all_hosts all_descs
