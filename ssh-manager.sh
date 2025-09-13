@@ -1389,19 +1389,49 @@ _prompt_for_identity_file_interactive() {
     done
 }
 
-# (Private) Draws the current details of the host being edited in a menu.
-_draw_edit_host_details() {
-    local hostname="$1"
-    local user="$2"
-    local port="$3"
-    local identityfile="$4"
+# (Private) Draws the new interactive UI for editing a host.
+# Highlights any values that have changed from the original.
+_draw_interactive_edit_host_ui() {
+    local new_hostname="$1" new_user="$2" new_port="$3" new_identityfile="$4"
+    local original_hostname="$5" original_user="$6" original_port="$7" original_identityfile="$8"
 
-    #printMsg "${C_GRAY}${DIV}${T_RESET}"
-    printMsg "$(printf "  %-15s: %s" "HostName" "${C_L_CYAN}${hostname}${T_RESET}")"
-    printMsg "$(printf "  %-15s: %s" "User" "${C_L_CYAN}${user}${T_RESET}")"
-    printMsg "$(printf "  %-15s: %s" "Port" "${C_L_CYAN}${port}${T_RESET}")"
-    printMsg "$(printf "  %-15s: %s" "IdentityFile" "${C_L_CYAN}${identityfile:-(not set)}${T_RESET}")"
-    printMsg "${C_GRAY}${DIV}${T_RESET}"
+    # Helper to format a line, adding a change indicator if needed.
+    _format_edit_line() {
+        local key="$1" label="$2" new_val="$3" original_val="$4"
+
+        local display_val="${new_val}"
+        if [[ "$label" == "IdentityFile" ]]; then
+            display_val="${new_val/#$HOME/\~}"
+        fi
+
+        if [[ -z "$display_val" ]]; then
+            display_val="${C_GRAY}(not set)${T_RESET}"
+        else
+            display_val="${C_L_CYAN}${display_val}${T_RESET}"
+        fi
+
+        local change_indicator=" "
+        local expanded_new_val="${new_val/#\~/$HOME}"
+        local expanded_orig_val="${original_val/#\~/$HOME}"
+        if [[ "$expanded_new_val" != "$expanded_orig_val" ]]; then
+            change_indicator="${C_L_YELLOW}*${T_RESET}"
+        fi
+
+        printf " ${C_L_WHITE}%s)${T_RESET} %b %-15s: %b\n" "$key" "$change_indicator" "$label" "$display_val"
+    }
+
+    printMsg "Choose an option to configure:"
+    _format_edit_line "1" "HostName" "$new_hostname" "$original_hostname"
+    _format_edit_line "2" "User" "$new_user" "$original_user"
+    _format_edit_line "3" "Port" "$new_port" "$original_port"
+    _format_edit_line "4" "IdentityFile" "$new_identityfile" "$original_identityfile"
+
+    echo
+    printMsg " ${C_L_WHITE}c) ${C_L_YELLOW}(C)ancel/(D)iscard${T_RESET} all pending changes"
+    printMsg " ${C_L_WHITE}s) ${C_L_GREEN}(S)ave changes and Quit${T_RESET}"
+    printMsg " ${C_L_WHITE}q) ${C_L_YELLOW}(Q)uit${T_RESET} without saving (or press ${C_L_YELLOW}ESC${T_RESET})"
+    echo
+    printMsgNoNewline "${T_QST_ICON} Your choice: "
 }
 
 # Edits an existing host in the SSH config.
@@ -1428,66 +1458,86 @@ edit_ssh_host() {
     while true; do
         clear
         printBanner "Edit SSH Host - ${C_L_CYAN}${host_to_edit}${C_BLUE}"
-        _draw_edit_host_details "$new_hostname" "$new_user" "$new_port" "$new_identityfile"
+        _draw_interactive_edit_host_ui "$new_hostname" "$new_user" "$new_port" "$new_identityfile" \
+                                       "$original_hostname" "$original_user" "$original_port" "$original_identityfile"
 
-        local -a menu_options=(
-            "Edit HostName"
-            "Edit User"
-            "Edit Port"
-            "Edit IdentityFile"
-            "Save and Exit"
-            "Cancel"
-        )
+        local key; key=$(read_single_char)
 
-        local selected_index; selected_index=$(interactive_single_select_menu "Select a field to edit:" "" "${menu_options[@]}")
-        if [[ $? -ne 0 ]]; then printInfoMsg "Edit cancelled. No changes were saved."; return; fi
-        local selected_option="${menu_options[$selected_index]}"
-
-        case "$selected_option" in
-            "Edit HostName") prompt_for_input "HostName" new_hostname "$new_hostname" ;;
-            "Edit User") prompt_for_input "User" new_user "$new_user" ;;
-            "Edit Port") prompt_for_input "Port" new_port "$new_port" ;;
-            "Edit IdentityFile")
+        case "$key" in
+            '1') prompt_for_input "HostName" new_hostname "$new_hostname" ;;
+            '2') prompt_for_input "User" new_user "$new_user" ;;
+            '3') prompt_for_input "Port" new_port "$new_port" ;;
+            '4')
+                clear_current_line
                 # This function is already a menu, so it fits perfectly.
                 _prompt_for_identity_file_interactive new_identityfile "$new_identityfile" "$host_to_edit" "$new_user" "$new_hostname"
                 ;;
-            "Save and Exit") break ;;
-            "Cancel") printInfoMsg "Edit cancelled. No changes were saved."; return ;;
+            'c'|'C'|'d'|'D')
+                # Discard changes
+                clear_current_line
+                if prompt_yes_no "Discard all pending changes?" "y"; then
+                    new_hostname="$original_hostname"
+                    new_user="$original_user"
+                    new_port="$original_port"
+                    new_identityfile="$original_identityfile"
+                    printInfoMsg "Changes discarded."
+                    sleep 1 # Give user time to see message
+                fi
+                ;;
+            's'|'S')
+                # Save
+                # Expand tildes for a robust comparison
+                local expanded_new_idfile="${new_identityfile/#\~/$HOME}"
+                local expanded_orig_idfile="${original_identityfile/#\~/$HOME}"
+
+                if [[ "$new_hostname" == "$original_hostname" && \
+                      "$new_user" == "$original_user" && \
+                      "$new_port" == "$original_port" && \
+                      "$expanded_new_idfile" == "$expanded_orig_idfile" ]]; then
+                    clear_current_line
+                    printInfoMsg "No changes detected. Host configuration remains unchanged."
+                    sleep 1
+                    break # Exit loop
+                fi
+
+                # Save logic
+                local config_without_host
+                config_without_host=$(_remove_host_block_from_config "$host_to_edit")
+                local new_host_block
+                new_host_block=$(_build_host_block_string "$host_to_edit" "$new_hostname" "$new_user" "$new_port" "$new_identityfile")
+                echo -e "${config_without_host}\n\n${new_host_block}" | cat -s > "$SSH_CONFIG_PATH"
+                printOkMsg "Host '${host_to_edit}' has been updated."
+
+                # Cleanup
+                if [[ -n "$original_identityfile" && "$expanded_new_idfile" != "$expanded_orig_idfile" ]]; then
+                    _cleanup_orphaned_key "$original_identityfile"
+                fi
+                break # Exit loop
+                ;;
+            'q'|'Q'|"$KEY_ESC")
+                # Quit
+                local expanded_new_idfile="${new_identityfile/#\~/$HOME}"
+                local expanded_orig_idfile="${original_identityfile/#\~/$HOME}"
+                if [[ "$new_hostname" != "$original_hostname" || \
+                      "$new_user" != "$original_user" || \
+                      "$new_port" != "$original_port" || \
+                      "$expanded_new_idfile" != "$expanded_orig_idfile" ]]; then
+                    clear_current_line
+                    if prompt_yes_no "You have unsaved changes. Quit without saving?" "n"; then
+                        printInfoMsg "Edit cancelled. No changes were saved."
+                        sleep 1
+                        break
+                    fi
+                else
+                    # No changes, just exit
+                    break
+                fi
+                ;;
         esac
     done
 
-    # Check if any changes were actually made before rewriting the file.
-    if [[ "$new_hostname" == "$original_hostname" && \
-          "$new_user" == "$original_user" && \
-          "$new_port" == "$original_port" && \
-          "$new_identityfile" == "$original_identityfile" ]]; then
-        printInfoMsg "No changes detected. Host configuration remains unchanged."
-        return
-    fi
-
-    # If the user or hostname changed, the IdentityFile prompt might need to be re-evaluated
-    # if it was generated with the old values. The current implementation is simple and
-    # doesn't handle this complex dependency, which is an acceptable trade-off for the
-    # improved UX. The user can simply re-edit the IdentityFile if needed.
-
-    # Get the config content without the old host block
-    local config_without_host
-    config_without_host=$(_remove_host_block_from_config "$host_to_edit")
-
-    # Build the new host block using the shared helper function
-    local new_host_block
-    new_host_block=$(_build_host_block_string "$host_to_edit" "$new_hostname" "$new_user" "$new_port" "$new_identityfile")
-
-    # Combine the existing config (minus the old block) with the new block and write to the file
-    echo -e "${config_without_host}\n\n${new_host_block}" | cat -s > "$SSH_CONFIG_PATH"
-
-    printOkMsg "Host '${host_to_edit}' has been updated."
-
-    # --- Cleanup ---
-    # If the identity file was changed or removed, check if the old key is now orphaned.
-    if [[ -n "$original_identityfile" && "$original_identityfile" != "$new_identityfile" ]]; then
-        _cleanup_orphaned_key "$original_identityfile"
-    fi
+    # After loop, we just return.
+    return 0
 }
 
 # Allows advanced editing of a host's config block directly in $EDITOR.
@@ -2559,8 +2609,19 @@ run_menu_action() {
     local action_func="$1"
     shift
     clear
+
+    # Show the cursor. Many actions launched from cursor-less views (like the
+    # server list) require user input and thus need a visible cursor.
+    printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty
+
     # Call the function with any remaining arguments. It's expected to print its own banner.
     "$action_func" "$@"
+
+    # Hide the cursor again before returning to the parent view, which expects
+    # the cursor to be hidden. This is done before prompt_to_continue, which
+    # does not require a visible cursor.
+    printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty
+
     # After the action is complete, wait for user input before returning to the menu.
     prompt_to_continue
 }
