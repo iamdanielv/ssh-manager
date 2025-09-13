@@ -601,30 +601,6 @@ select_ssh_host() {
     return 0
 }
 
-# Prompts user to select a host and a key, then copies the key.
-copy_ssh_id() {
-    printBanner "Copy SSH Key to Server"
-
-    local selected_host
-    selected_host=$(select_ssh_host "Select a host to copy a key to:")
-    [[ $? -ne 0 ]] && return # select_ssh_host prints messages
-
-    # Find all public keys in the SSH directory
-    local -a pub_keys
-    mapfile -t pub_keys < <(find "$SSH_DIR" -maxdepth 1 -type f -name "*.pub")
-    if [[ ${#pub_keys[@]} -eq 0 ]]; then
-        printInfoMsg "No public SSH keys (.pub files) found in ${SSH_DIR}."
-        return
-    fi
-
-    local key_idx
-    key_idx=$(interactive_single_select_menu "Select the public key to copy:" "" "${pub_keys[@]}")
-    [[ $? -ne 0 ]] && { printInfoMsg "Operation cancelled."; return; }
-    local selected_key="${pub_keys[$key_idx]}"
-
-    copy_ssh_id_for_host "$selected_host" "$selected_key"
-}
-
 # Helper function that does the actual ssh-copy-id work
 copy_ssh_id_for_host() {
     local host_alias="$1"
@@ -685,6 +661,117 @@ generate_ssh_key() {
     else
         # run_with_spinner already prints the error details.
         printErrMsg "Failed to generate SSH key."
+    fi
+}
+
+# Prompts user to select a host and then copies the specified key.
+copy_selected_ssh_key() {
+    local selected_key="$1"
+    printBanner "Copy SSH Key to Server"
+    printInfoMsg "Selected key: ${C_L_BLUE}${selected_key}${T_RESET}"
+
+    local selected_host
+    selected_host=$(select_ssh_host "Select a host to copy this key to:")
+    [[ $? -ne 0 ]] && return
+
+    copy_ssh_id_for_host "$selected_host" "$selected_key"
+}
+
+# Deletes an SSH key pair (private and public files).
+delete_ssh_key() {
+    local key_base_path="$1"
+    local pub_key_path="${key_base_path}.pub"
+    printBanner "Delete SSH Key Pair"
+
+    if ! [[ -f "$key_base_path" ]]; then
+        printErrMsg "Private key not found: ${key_base_path}"
+        return 1
+    fi
+
+    local question="Are you sure you want to permanently delete this key pair?\n  Private: ${key_base_path}"
+    if [[ -f "$pub_key_path" ]]; then
+        question+="\n  Public:  ${pub_key_path}"
+    else
+        question+="\n  (Public key not found, will only delete private key)"
+    fi
+
+    if prompt_yes_no "$question" "n"; then
+        if run_with_spinner "Deleting key pair..." rm -f "$key_base_path" "$pub_key_path"; then
+            printOkMsg "Key pair deleted."
+        else
+            printErrMsg "Failed to delete key pair."
+        fi
+    else
+        printInfoMsg "Deletion cancelled."
+    fi
+}
+
+# Renames an SSH key pair.
+rename_ssh_key() {
+    local old_key_path="$1"
+    printBanner "Rename SSH Key"
+    local new_key_filename
+    local old_filename; old_filename=$(basename "$old_key_path")
+    prompt_for_input "Enter new filename for the key (in ${SSH_DIR})" new_key_filename "$old_filename" || return
+    local new_key_path="${SSH_DIR}/${new_key_filename}"
+
+    if [[ "$new_key_path" == "$old_key_path" ]]; then
+        printInfoMsg "Filename is unchanged. No action taken."
+        return
+    fi
+    if [[ -f "$new_key_path" || -f "${new_key_path}.pub" ]]; then
+        printErrMsg "Target key file '${new_key_path}' or its .pub already exists. Aborting."
+        return 1
+    fi
+
+    if run_with_spinner "Renaming key files..." _rename_key_pair "$old_key_path" "$new_key_path"; then
+        printOkMsg "Key renamed successfully."
+        printInfoMsg "Note: You must manually update any SSH host configs that used the old key name."
+    else
+        printErrMsg "Failed to rename key files."
+        return 1
+    fi
+}
+
+# Displays the content of a public key file.
+view_public_key() {
+    local pub_key_path="$1"
+    printBanner "View Public Key"
+    if [[ ! -f "$pub_key_path" ]]; then printErrMsg "Public key file not found: ${pub_key_path}"; return 1; fi
+    printInfoMsg "Contents of ${C_L_BLUE}${pub_key_path}${T_RESET}:"
+    printMsg "${C_GRAY}${DIV}${T_RESET}"
+    printMsg "${C_L_GRAY}$(cat "${pub_key_path}")${T_RESET}"
+    printMsg "${C_GRAY}${DIV}${T_RESET}"
+}
+
+# (Private) Worker for regenerating a public key, for use with run_with_spinner.
+_regenerate_public_key_worker() {
+    # ssh-keygen -y reads from the private key file and writes the public key to stdout.
+    ssh-keygen -y -f "$1" > "$2"
+}
+
+# Re-generates a public key from a private key file.
+regenerate_public_key() {
+    local private_key_path="$1"
+    local public_key_path="${private_key_path}.pub"
+    printBanner "Re-generate Public Key"
+
+    if [[ ! -f "$private_key_path" ]]; then
+        printErrMsg "Private key not found: ${private_key_path}"
+        return 1
+    fi
+
+    if [[ -f "$public_key_path" ]]; then
+        if ! prompt_yes_no "Public key '${public_key_path}' already exists. Overwrite it?" "n"; then
+            printInfoMsg "Operation cancelled."
+            return
+        fi
+    fi
+
+    if run_with_spinner "Re-generating public key..." _regenerate_public_key_worker "$private_key_path" "$public_key_path"; then
+        printOkMsg "Public key successfully generated at: ${C_L_BLUE}${public_key_path}${T_RESET}"
+    else
+        printErrMsg "Failed to re-generate public key."
     fi
 }
 
@@ -2168,8 +2255,8 @@ interactive_port_forward_view() {
     }
 
     # --- Main Loop ---
+    _refresh_forward_list # Initial population of the list.
     while true; do
-        _refresh_forward_list
         _draw_view
 
         local key; key=$(read_single_char)
@@ -2184,16 +2271,27 @@ interactive_port_forward_view() {
         case "$key" in
             "$KEY_UP"|"k") if (( num_options > 0 )); then current_option=$(( (current_option - 1 + num_options) % num_options )); fi ;;
             "$KEY_DOWN"|"j") if (( num_options > 0 )); then current_option=$(( (current_option + 1) % num_options )); fi ;;
-            'l'|'L') run_menu_action "setup_local_port_forward" ;;
-            'r'|'R') run_menu_action "setup_remote_port_forward" ;;
+            'l'|'L')
+                run_menu_action "setup_local_port_forward"
+                _refresh_forward_list
+                ;;
+            'r'|'R')
+                run_menu_action "setup_remote_port_forward"
+                _refresh_forward_list
+                ;;
             's'|'S')
                 if [[ -n "$selected_pid" ]]; then
                     local question="Stop port forward ${C_L_CYAN}${selected_spec}${T_RESET} on ${C_L_CYAN}${selected_host}${T_RESET} (PID: ${selected_pid})?"
                     if prompt_yes_no "$question" "y"; then
                         run_with_spinner "Stopping port forward (PID: ${selected_pid})" kill "$selected_pid"
+                        _refresh_forward_list
                     fi
                 fi ;;
-            'c'|'C') if [[ -n "$selected_pid" ]]; then run_menu_action "clone_port_forward" "$selected_type" "$selected_spec" "$selected_host"; fi ;;
+            'c'|'C')
+                if [[ -n "$selected_pid" ]]; then
+                    run_menu_action "clone_port_forward" "$selected_type" "$selected_spec" "$selected_host"
+                    _refresh_forward_list
+                fi ;;
             "$KEY_ESC"|"q"|"Q") return 0 ;;
         esac
     done
@@ -2359,8 +2457,8 @@ interactive_server_management_view() {
     }
 
     # --- Main Loop ---
+    _refresh_host_list # Initial population of the host list.
     while true; do
-        _refresh_host_list
         _draw_view
 
         local key; key=$(read_single_char)
@@ -2383,18 +2481,35 @@ interactive_server_management_view() {
                     fi
                 fi ;;
             'a'|'A')
-                run_menu_action "add_ssh_host" ;;
+                run_menu_action "add_ssh_host"
+                _refresh_host_list
+                ;;
             'e')
-                if [[ -n "$selected_host" ]]; then run_menu_action "edit_ssh_host" "$selected_host"; fi ;;
+                if [[ -n "$selected_host" ]]; then
+                    run_menu_action "edit_ssh_host" "$selected_host"
+                    _refresh_host_list
+                fi ;;
             'E')
-                if [[ -n "$selected_host" ]]; then run_menu_action "edit_ssh_host_in_editor" "$selected_host"; fi ;;
+                if [[ -n "$selected_host" ]]; then
+                    run_menu_action "edit_ssh_host_in_editor" "$selected_host"
+                    _refresh_host_list
+                fi ;;
             'd'|'D')
                 # Corresponds to user request for (D)elete
-                if [[ -n "$selected_host" ]]; then run_menu_action "remove_ssh_host" "$selected_host"; fi ;;
+                if [[ -n "$selected_host" ]]; then
+                    run_menu_action "remove_ssh_host" "$selected_host"
+                    _refresh_host_list
+                fi ;;
             'r'|'R')
-                if [[ -n "$selected_host" ]]; then run_menu_action "rename_ssh_host" "$selected_host"; fi ;;
+                if [[ -n "$selected_host" ]]; then
+                    run_menu_action "rename_ssh_host" "$selected_host"
+                    _refresh_host_list
+                fi ;;
             'c'|'C')
-                if [[ -n "$selected_host" ]]; then run_menu_action "clone_ssh_host" "$selected_host"; fi ;;
+                if [[ -n "$selected_host" ]]; then
+                    run_menu_action "clone_ssh_host" "$selected_host"
+                    _refresh_host_list
+                fi ;;
             't')
                 if [[ -n "$selected_host" ]]; then
                     clear; printBanner "Test SSH Connection"; _test_connection_for_host "$selected_host"; prompt_to_continue
@@ -2403,6 +2518,142 @@ interactive_server_management_view() {
                 run_menu_action "test_all_ssh_connections" ;;
             "$KEY_ESC"|"q"|"Q")
                 return 0 ;; # Back to main menu
+        esac
+    done
+}
+
+interactive_key_management_view() {
+    # Hide cursor and ensure it is shown again when the function returns.
+    printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty
+    trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty' RETURN
+
+    local current_option=0
+    local -a key_paths=() menu_options=()
+    local num_options=0
+
+    _get_key_details() {
+        local key_file="$1"
+        local details
+
+        # Heuristic: A file whose first line looks like a public key is not a private key.
+        # This filters out files like 'authorized_keys' and stray '.pub' files.
+        # We use head -n 1 to only check the first line for performance.
+        if head -n 1 "$key_file" 2>/dev/null | grep -q -E '^(ssh-(rsa|dss|ed25519)|ecdsa-sha2-nistp(256|384|521)) '; then
+            return 1
+        fi
+
+        # Attempt to get the key fingerprint. If this fails, it's not a valid key file.
+        details=$(ssh-keygen -l -f "$key_file" 2>/dev/null)
+        # A valid private key will produce a single line of output.
+        # known_hosts produces multiple lines. Other files produce no output or errors.
+        if [[ -z "$details" || $(echo "$details" | wc -l) -ne 1 ]]; then
+            return 1 # Not a valid private key file.
+        fi
+        local bits; bits=$(echo "$details" | awk '{print $1}')
+        local type; type=$(echo "$details" | awk '{print $NF}' | tr -d '()')
+        local comment; comment=$(echo "$details" | awk '{for(i=3;i<NF;i++) printf "%s ",$i}' | sed 's/ $//')
+        [[ -z "$comment" ]] && comment="(no comment)"
+        echo "$type $bits $comment"
+    }
+
+    _refresh_key_list() {
+        key_paths=()
+        menu_options=()
+        # Find all files in SSH_DIR that do NOT end in .pub.
+        # Then, for each candidate, use ssh-keygen to verify it's a valid private key.
+        while IFS= read -r key_path; do
+            local details_str
+            # If _get_key_details succeeds, it's a valid key file.
+            if details_str=$(_get_key_details "$key_path"); then
+                key_paths+=("$key_path")
+
+                local filename; filename=$(basename "$key_path")
+                local key_type key_bits key_comment
+                read -r key_type key_bits key_comment <<< "$details_str"
+
+                local formatted_string
+                formatted_string=$(printf "%-25s %-10s %-6s %s" "${filename}" "${key_type}" "${key_bits}" "${key_comment}")
+                menu_options+=("$formatted_string")
+            fi
+        done < <(find "$SSH_DIR" -maxdepth 1 -type f ! -name "*.pub")
+
+        num_options=${#key_paths[@]}
+        if (( current_option >= num_options )); then current_option=$(( num_options - 1 )); fi
+        if (( current_option < 0 )); then current_option=0; fi
+    }
+
+    _draw_view() {
+        clear
+        printBanner "Key Management"
+        local header; header=$(printf " %-25s %-10s %-6s %s" "KEY FILENAME" "TYPE" "BITS" "COMMENT")
+        printMsg "  ${C_WHITE}${header}${T_RESET}"
+        printMsg "${C_GRAY}${DIV}${T_RESET}"
+
+        if [[ $num_options -gt 0 ]]; then
+            for i in "${!menu_options[@]}"; do
+                local pointer=" "; local highlight_start=""; local highlight_end=""
+                if (( i == current_option )); then
+                    pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"
+                    highlight_start="${T_REVERSE}"
+                    highlight_end="${T_RESET}"
+                fi
+                printMsg " ${pointer} ${highlight_start}${menu_options[i]}${highlight_end}${T_RESET}"
+            done
+        else
+            printMsg "  ${C_GRAY}(No keys found. Press 'g' to generate one.)${T_RESET}"
+        fi
+
+        printMsg "${C_GRAY}${DIV}${T_RESET}"
+        printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC${T_RESET} Back"
+        printMsg "  ${T_BOLD}Key Actions:${T_RESET}  (${C_L_GREEN}G${T_RESET})enerate | (${C_L_RED}D${T_RESET})elete | (${C_L_CYAN}R${T_RESET})ename"
+        printMsg "                (${C_L_CYAN}V${T_RESET})iew public | (${C_L_CYAN}C${T_RESET})opy | Re-gen (${C_L_CYAN}P${T_RESET})ublic"
+        printMsg "${C_GRAY}${DIV}${T_RESET}"
+    }
+
+    _refresh_key_list # Initial population of the key list.
+    while true; do
+        _draw_view
+
+        local key; key=$(read_single_char)
+        local selected_key_path=""
+        if (( num_options > 0 && current_option >= 0 )); then
+            selected_key_path="${key_paths[$current_option]}"
+        fi
+
+        case "$key" in
+            "$KEY_UP"|"k") if (( num_options > 0 )); then current_option=$(( (current_option - 1 + num_options) % num_options )); fi ;;
+            "$KEY_DOWN"|"j") if (( num_options > 0 )); then current_option=$(( (current_option + 1) % num_options )); fi ;;
+            'g'|'G')
+                run_menu_action "generate_ssh_key"
+                _refresh_key_list # The list of keys has changed.
+                ;;
+            'c'|'C')
+                if [[ -n "$selected_key_path" && -f "${selected_key_path}.pub" ]]; then
+                    run_menu_action "copy_selected_ssh_key" "${selected_key_path}.pub"
+                elif [[ -n "$selected_key_path" ]]; then
+                    printErrMsg "Public key for '${selected_key_path}' not found."; prompt_to_continue
+                fi ;;
+            'd'|'D')
+                if [[ -n "$selected_key_path" ]]; then
+                    run_menu_action "delete_ssh_key" "$selected_key_path"
+                    _refresh_key_list # The list of keys has changed.
+                fi ;;
+            'r'|'R')
+                if [[ -n "$selected_key_path" ]]; then
+                    run_menu_action "rename_ssh_key" "$selected_key_path"
+                    _refresh_key_list # The list of keys has changed.
+                fi ;;
+            'v'|'V')
+                if [[ -n "$selected_key_path" && -f "${selected_key_path}.pub" ]]; then
+                    run_menu_action "view_public_key" "${selected_key_path}.pub"
+                elif [[ -n "$selected_key_path" ]]; then
+                    printErrMsg "Public key for '${selected_key_path}' not found."; prompt_to_continue
+                fi ;;
+            'p'|'P')
+                if [[ -n "$selected_key_path" ]]; then
+                    run_menu_action "regenerate_public_key" "$selected_key_path"
+                fi ;;
+            "$KEY_ESC"|"q"|"Q") return 0 ;;
         esac
     done
 }
@@ -2497,7 +2748,7 @@ main_loop() {
 
         case "${menu_options[$selected_index]}" in
         "Server Management") interactive_server_management_view ;;
-        "Key Management") key_menu ;;
+        "Key Management") interactive_key_management_view ;;
         "Port Forwarding") interactive_port_forward_view ;;
         "Advanced Tools") advanced_menu ;;
         "Exit") break ;;
