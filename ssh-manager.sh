@@ -1659,22 +1659,47 @@ rename_ssh_host() {
     new_block=$(printf '%s' "$original_block" | sed -E "s/^[[:space:]]*[Hh]ost[[:space:]].*/Host ${new_alias}/")
 
     # --- Key File Renaming Logic ---
-    local old_key_path_convention="${SSH_DIR}/${host_to_rename}_id_ed25519"
-    local new_key_path_convention="${SSH_DIR}/${new_alias}_id_ed25519"
     local current_identity_file; current_identity_file=$(_get_explicit_ssh_config_value "$host_to_rename" "IdentityFile")
-    local expanded_identity_file="${current_identity_file/#\~/$HOME}"
+    if [[ -n "$current_identity_file" ]]; then
+        local expanded_old_key_path="${current_identity_file/#\~/$HOME}"
+        if [[ -f "$expanded_old_key_path" ]]; then
+            # Check if the key is used by any other hosts.
+            local -a hosts_sharing_key
+            mapfile -t all_hosts < <(get_ssh_hosts)
+            for other_host in "${all_hosts[@]}"; do
+                if [[ "$other_host" != "$host_to_rename" ]]; then
+                    local other_host_key; other_host_key=$(_get_explicit_ssh_config_value "$other_host" "IdentityFile")
+                    if [[ "$other_host_key" == "$current_identity_file" ]]; then
+                        hosts_sharing_key+=("$other_host")
+                    fi
+                fi
+            done
 
-    # Check if a conventionally named key exists AND it's the one being used in the config.
-    if [[ -f "$old_key_path_convention" && "$expanded_identity_file" == "$old_key_path_convention" ]]; then
-        if prompt_yes_no "Found associated key file. Rename it to match the new alias?" "y"; then
-            if [[ -f "$new_key_path_convention" ]]; then
-                printErrMsg "Cannot rename key: target file '${new_key_path_convention}' already exists."
-            elif run_with_spinner "Renaming key files..." _rename_key_pair "$old_key_path_convention" "$new_key_path_convention"; then
-                # Update the IdentityFile path in the new config block.
-                new_block=$(printf '%s' "$new_block" | sed -E "s|([[:space:]]*IdentityFile[[:space:]]+).*|\1${new_key_path_convention}|")
-            else
-                printErrMsg "Failed to rename key files. The host alias was not changed."
-                return 1 # Abort the whole operation
+            local proposed_new_key_path="${SSH_DIR}/${new_alias}_id_ed25519"
+            if [[ ${#hosts_sharing_key[@]} -gt 0 ]]; then
+                # Key is shared. Offer to COPY it to a new dedicated key.
+                local question="The key '${current_identity_file}' is shared by other hosts.\n    Do you want to create a dedicated COPY of this key for '${new_alias}'?\n    New key path: ${C_L_BLUE}${proposed_new_key_path}${T_RESET}"
+                if prompt_yes_no "$question" "y"; then
+                    if [[ -f "$proposed_new_key_path" || -f "${proposed_new_key_path}.pub" ]]; then
+                        printErrMsg "Cannot create key copy: target file '${proposed_new_key_path}' or its .pub already exists."
+                    elif run_with_spinner "Copying key files..." _copy_key_pair "$expanded_old_key_path" "$proposed_new_key_path"; then
+                        new_block=$(printf '%s' "$new_block" | sed -E "s|([[:space:]]*IdentityFile[[:space:]]+).*|\1${proposed_new_key_path}|")
+                    else
+                        printErrMsg "Failed to copy key files. The host alias was not changed."; return 1
+                    fi
+                fi
+            elif [[ "$expanded_old_key_path" != "$proposed_new_key_path" ]]; then
+                # Key is not shared. Offer to RENAME it.
+                local question="This host uses the key:\n    ${C_L_BLUE}${current_identity_file/#\~/$HOME}${T_RESET}\nDo you want to rename this key to match the new host alias?\n    New name: ${C_L_BLUE}${proposed_new_key_path}${T_RESET}"
+                if prompt_yes_no "$question" "y"; then
+                    if [[ -f "$proposed_new_key_path" || -f "${proposed_new_key_path}.pub" ]]; then
+                        printErrMsg "Cannot rename key: target file '${proposed_new_key_path}' or its .pub already exists."
+                    elif run_with_spinner "Renaming key files..." _rename_key_pair "$expanded_old_key_path" "$proposed_new_key_path"; then
+                        new_block=$(printf '%s' "$new_block" | sed -E "s|([[:space:]]*IdentityFile[[:space:]]+).*|\1${proposed_new_key_path}|")
+                    else
+                        printErrMsg "Failed to rename key files. The host alias was not changed."; return 1
+                    fi
+                fi
             fi
         fi
     fi
@@ -1693,6 +1718,15 @@ _rename_key_pair() {
     local new_base="$2"
     # The `&&` ensures we only try to move the public key if the private key move succeeds.
     mv "${old_base}" "${new_base}" && mv "${old_base}.pub" "${new_base}.pub"
+}
+
+# (Private) Helper function to copy both private and public key files.
+# This is designed to be called by `run_with_spinner`.
+# Usage: _copy_key_pair <source_base_path> <dest_base_path>
+_copy_key_pair() {
+    local source_base="$1"
+    local dest_base="$2"
+    cp "${source_base}" "${dest_base}" && cp "${source_base}.pub" "${dest_base}.pub"
 }
 
 # (Private) Checks for and offers to remove an orphaned key file.
