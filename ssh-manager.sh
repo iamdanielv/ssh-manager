@@ -2438,15 +2438,29 @@ list_all_hosts() {
 # Usage: _format_saved_port_forward_line <status> <pid> <type> <spec> <host> <desc>
 _format_saved_port_forward_line() {
     local status="$1" pid="$2" type="$3" spec="$4" host="$5" desc="$6"
-    local type_color=""; if [[ "$type" == "Local" ]]; then type_color="$C_L_CYAN"; elif [[ "$type" == "Remote" ]]; then type_color="$C_L_YELLOW"; fi
-    local status_icon; if [[ "$status" == "active" ]]; then status_icon="${C_L_GREEN}[ACTIVE]  "; else status_icon="${C_GRAY}[INACTIVE]"; fi
-    printf "%-10s %-8s ${type_color}%-8s ${C_L_WHITE}%-25s ${C_L_CYAN}%-20s ${C_GRAY}%s${T_RESET}" \
-        "$status_icon" "${pid}" "$type" "$spec" "$host" "$desc"
+    local type_color=""
+    if [[ "$type" == "Local" ]]; then type_color="$C_L_CYAN"; elif [[ "$type" == "Remote" ]]; then type_color="$C_L_YELLOW"; fi
+    local status_icon
+    if [[ "$status" == "active" ]]; then status_icon="${C_L_GREEN}[✓]"; else status_icon="${C_GRAY}[-]"; fi
+
+    local line1 line2
+    line1=$(printf "%-3s %-8s ${type_color}%-8s ${C_L_WHITE}%-45s" \
+        "$status_icon" "$pid" "$type" "$spec")
+
+    # The extra 3 spaces at the start are to align with the '❯ ' prefix from the list view.
+    line2=$(printf "   ${C_L_CYAN} %-20s ${C_L_WHITE}%-45s" \
+        "$host" "$desc")
+
+    printf "%s\n%s${T_RESET}" "$line1" "$line2"
 }
 
 _port_forward_view_draw_header() {
-    local header; header=$(printf "   %-10s %-8s %-8s %-25s %-20s %s" "STATUS" "PID" "TYPE" "FORWARD" "HOST" "DESCRIPTION")
-    printMsg "${C_WHITE}${header}${T_RESET}"
+    local header1 header2
+    header1=$(printf "   %-3s %-8s %-8s %-45s" "[ ]" "PID" "TYPE" "FORWARD")
+    # Indent line 2 to align HOST under TYPE. 10+1+8+1=20 spaces for first 2 columns + separators
+    header2=$(printf "    %-20s %-45s" "HOST" "DESCRIPTION")
+    printMsg "${C_WHITE}${header1}${T_RESET}"
+    printMsg "${C_WHITE}${header2}${T_RESET}"
 }
 
 _port_forward_view_draw_footer() {
