@@ -2058,36 +2058,35 @@ _save_all_port_forwards() {
     mv "$temp_file" "$PORT_FORWARDS_CONFIG_PATH"
 }
 
-# (Private) Prompts user for all details of a port forward. Used by add and edit.
-# Usage: _prompt_for_port_forward_details type_var spec_var host_var desc_var [defaults...]
-_prompt_for_port_forward_details() {
-    local -n out_type="$1" out_spec="$2" out_host="$3" out_desc="$4"
-    local d_type="${5:-}" d_spec_p1="${6:-}" d_spec_h="${7:-}" d_spec_p2="${8:-}" d_host="${9:-}" d_desc="${10:-}"
-    local -a type_options=("Local (-L)" "Remote (-R)"); local type_idx; type_idx=$(interactive_single_select_menu "Select forward type:" "" "${type_options[@]}")
-    [[ $? -ne 0 ]] && { printInfoMsg "Cancelled."; return 1; }
-    if [[ "$type_idx" -eq 0 ]]; then out_type="Local"; else out_type="Remote"; fi
-    out_host=$(select_ssh_host "Select a host for the port forward:" "false"); [[ $? -ne 0 ]] && return 1
-    local p1_val p1_prompt h_val h_prompt p2_val p2_prompt
-    if [[ "$out_type" == "Local" ]]; then
-        p1_prompt="Enter the LOCAL port to listen on"; h_prompt="Enter the REMOTE host to connect to (from ${out_host})"; p2_prompt="Enter the REMOTE port to connect to"
-    else
-        p1_prompt="Enter the REMOTE port to listen on (on ${out_host})"; h_prompt="Enter the LOCAL host to connect to"; p2_prompt="Enter the LOCAL port to connect to"
-    fi
-    prompt_for_input "$p1_prompt" p1_val "${d_spec_p1:-8080}" || return 1
-    prompt_for_input "$h_prompt" h_val "${d_spec_h:-localhost}" || return 1
-    prompt_for_input "$p2_prompt" p2_val "${d_spec_p2:-80}" || return 1
-    out_spec="${p1_val}:${h_val}:${p2_val}"
-    prompt_for_input "Enter a short description for this forward" out_desc "${d_desc:-${out_spec} on ${out_host}}" || return 1
-    return 0
-}
-
 # Adds a new port forward configuration to the saved list.
 add_saved_port_forward() {
     printBanner "Add New Saved Port Forward"
-    local -a types specs hosts descs; _get_saved_port_forwards types specs hosts descs
-    local new_type new_spec new_host new_desc; if ! _prompt_for_port_forward_details new_type new_spec new_host new_desc; then return; fi
-    types+=("$new_type"); specs+=("$new_spec"); hosts+=("$new_host"); descs+=("$new_desc")
-    _save_all_port_forwards types specs hosts descs
+
+    # Set up initial empty/default values for the new forward.
+    local original_type="Local" original_p1="8080" original_h="localhost" original_p2="80" original_host="" original_desc=""
+
+    # These variables will be modified by the editor loop.
+    local new_type="$original_type" new_p1="$original_p1" new_h="$original_h" new_p2="$original_p2" new_host="$original_host" new_desc="$original_desc"
+
+    local banner_text="Add New Saved Port Forward"
+    if ! _interactive_port_forward_editor_loop "add" "$banner_text" \
+        new_type new_p1 new_h new_p2 new_host new_desc \
+        "$original_type" "$original_p1" "$original_h" "$original_p2" "$original_host" "$original_desc"; then
+        printInfoMsg "Add cancelled. No changes were saved."
+        return
+    fi
+
+    # --- Save Logic ---
+    if [[ -z "$new_host" || -z "$new_p1" || -z "$new_h" || -z "$new_p2" ]]; then
+        printErrMsg "Host and all port/host specifiers are required."; sleep 2; return 1
+    fi
+
+    local new_spec="${new_p1}:${new_h}:${new_p2}"
+    if [[ -z "$new_desc" ]]; then new_desc="${new_spec} on ${new_host}"; fi
+
+    local -a all_types all_specs all_hosts all_descs; _get_saved_port_forwards all_types all_specs all_hosts all_descs
+    all_types+=("$new_type"); all_specs+=("$new_spec"); all_hosts+=("$new_host"); all_descs+=("$new_desc")
+    _save_all_port_forwards all_types all_specs all_hosts all_descs
     printOkMsg "Saved new port forward: ${new_desc}"
 }
 
@@ -2099,18 +2098,20 @@ add_saved_port_forward() {
 # Usage: _interactive_port_forward_editor_loop <banner> <p_type> <p_p1> <p_h> <p_p2> <p_host> <p_desc>
 # Returns 0 if the user chooses to save, 1 if they cancel/quit.
 _draw_interactive_port_forward_editor_ui() {
-    local new_type="$1" new_p1="$2" new_h="$3" new_p2="$4" new_host="$5" new_desc="$6"
-    local original_type="$7" original_p1="$8" original_h="$9" original_p2="${10}" original_host="${11}" original_desc="${12}"
+    local mode="$1"
+    local new_type="$2" new_p1="$3" new_h="$4" new_p2="$5" new_host="$6" new_desc="$7"
+    local original_type="$8" original_p1="$9" original_h="${10}" original_p2="${11}" original_host="${12}" original_desc="${13}"
 
     # Helper to format a line, adding a change indicator (*) if needed.
     _format_line() {
         local key="$1" label="$2" new_val="$3" original_val="$4"
 
-        local display_val="${new_val}"
-        if [[ -z "$display_val" ]]; then display_val="${C_GRAY}(not set)${T_RESET}"; else display_val="${C_L_CYAN}${display_val}${T_RESET}"; fi
+        local display_val="${new_val}"; if [[ -z "$display_val" ]]; then display_val="${C_GRAY}(not set)${T_RESET}"; else display_val="${C_L_CYAN}${display_val}${T_RESET}"; fi
 
         local change_indicator=" "
-        if [[ "$new_val" != "$original_val" ]]; then change_indicator="${C_L_YELLOW}*${T_RESET}"; fi
+        if [[ "$mode" != "add" ]]; then
+            if [[ "$new_val" != "$original_val" ]]; then change_indicator="${C_L_YELLOW}*${T_RESET}"; fi
+        fi
 
         printf "  ${C_L_WHITE}%s)${T_RESET} %b %-15s: %b\n" "$key" "$change_indicator" "$label" "$display_val"
     }
@@ -2148,7 +2149,7 @@ _interactive_port_forward_editor_loop() {
 
     while true; do
         clear; printBanner "$banner_text"
-        _draw_interactive_port_forward_editor_ui "$n_type" "$n_p1" "$n_h" "$n_p2" "$n_host" "$n_desc" \
+        _draw_interactive_port_forward_editor_ui "$mode" "$n_type" "$n_p1" "$n_h" "$n_p2" "$n_host" "$n_desc" \
                                                  "$original_type" "$original_p1" "$original_h" "$original_p2" "$original_host" "$original_desc"
 
         local key; key=$(read_single_char)
@@ -2185,7 +2186,7 @@ _interactive_port_forward_editor_loop() {
             'c'|'C'|'d'|'D')
                 # Discard
                 clear_current_line
-                local question="Discard all pending changes?"; if [[ "$mode" == "clone" ]]; then question="Discard all changes and reset fields?"; fi
+                local question="Discard all pending changes?"; if [[ "$mode" == "add" || "$mode" == "clone" ]]; then question="Discard all changes and reset fields?"; fi
                 if prompt_yes_no "$question" "y"; then
                     n_type="$original_type"; n_p1="$original_p1"; n_h="$original_h"; n_p2="$original_p2"; n_host="$original_host"; n_desc="$original_desc"
                     printInfoMsg "Changes discarded."; sleep 1
