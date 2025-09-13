@@ -1670,6 +1670,192 @@ test_all_ssh_connections() {
     fi
 }
 
+# (Private) Common logic to execute and confirm a port forward command.
+_create_port_forward() {
+    local cmd_string="$1"
+    local explanation="$2"
+    local extra_notes="${3:-}"
+
+    printInfoMsg "$explanation"
+    if [[ -n "$extra_notes" ]]; then
+        printWarnMsg "$extra_notes"
+    fi
+
+    printMsg "\n${T_ULINE}Command to be run in the background:${T_RESET}"
+    printMsg "  ${C_L_BLUE}${cmd_string}${T_RESET}"
+    printMsg "\n${C_GRAY}The -N flag prevents executing a remote command, and -f runs it in the background.${T_RESET}"
+
+    if prompt_yes_no "Proceed with creating the port forward?" "y"; then
+        # The command already has -f to background itself.
+        if ${cmd_string}; then
+            printOkMsg "SSH port forward established successfully."
+            printInfoMsg "You can view it with 'List active port forwards' or find the process with 'pgrep -f \"${cmd_string}\"' and kill it when done."
+        else
+            printErrMsg "Failed to establish SSH port forward."
+        fi
+    else
+        printInfoMsg "Operation cancelled."
+    fi
+}
+
+# Sets up a local port forward (ssh -L).
+setup_local_port_forward() {
+    printBanner "Setup Local Port Forward (ssh -L)"
+
+    local selected_host
+    selected_host=$(select_ssh_host "Select a host for the port forward:")
+    [[ $? -ne 0 ]] && return
+
+    local local_port remote_host remote_port
+    prompt_for_input "Enter the LOCAL port to listen on" local_port "8080" || return
+    prompt_for_input "Enter the REMOTE host to connect to (from ${selected_host})" remote_host "localhost" || return
+    prompt_for_input "Enter the REMOTE port to connect to" remote_port "80" || return
+
+    local forward_spec="${local_port}:${remote_host}:${remote_port}"
+    local cmd_string="ssh -N -f -L ${forward_spec} ${selected_host}"
+    local explanation="This will forward local port ${C_L_CYAN}${local_port}${T_RESET} to ${C_L_CYAN}${remote_host}:${remote_port}${T_RESET} on the remote network."
+
+    _create_port_forward "$cmd_string" "$explanation"
+}
+
+# Sets up a remote port forward (ssh -R).
+setup_remote_port_forward() {
+    printBanner "Setup Remote Port Forward (ssh -R)"
+
+    local selected_host
+    selected_host=$(select_ssh_host "Select a host to open a port on:")
+    [[ $? -ne 0 ]] && return
+
+    local local_port remote_host remote_port
+    prompt_for_input "Enter the REMOTE port to listen on (on ${selected_host})" remote_port "8080" || return
+    prompt_for_input "Enter the LOCAL host to connect to" remote_host "localhost" || return
+    prompt_for_input "Enter the LOCAL port to connect to" local_port "80" || return
+
+    local forward_spec="${remote_port}:${remote_host}:${local_port}"
+    local cmd_string="ssh -N -f -R ${forward_spec} ${selected_host}"
+    local explanation="This will forward remote port ${C_L_CYAN}${remote_port}${T_RESET} on ${selected_host} to ${C_L_CYAN}${remote_host}:${local_port}${T_RESET} on your local machine."
+    local notes="Ensure 'GatewayPorts' is enabled in the server's sshd_config for remote forwards to be accessible externally."
+
+    _create_port_forward "$cmd_string" "$explanation" "$notes"
+}
+
+# (Private) Finds active port forwards and populates arrays with their details.
+# Usage: _get_active_port_forwards pids_array types_array specs_array hosts_array
+# Returns 0 if forwards are found, 1 otherwise.
+_get_active_port_forwards() {
+    local -n out_pids="$1"
+    local -n out_types="$2"
+    local -n out_specs="$3"
+    local -n out_hosts="$4"
+
+    # Clear output arrays
+    out_pids=()
+    out_types=()
+    out_specs=()
+    out_hosts=()
+
+    local active_forwards
+    active_forwards=$(ps -eo pid,command | grep '[s]sh -N -f -[LR]')
+
+    if [[ -z "$active_forwards" ]]; then
+        return 1 # No forwards found
+    fi
+
+    while IFS= read -r line; do
+        line=$(echo "$line" | sed 's/^[[:space:]]*//')
+        local pid; pid=$(echo "$line" | cut -d' ' -f1)
+        local cmd; cmd=$(echo "$line" | cut -d' ' -f2-)
+        local type_flag current_spec current_host
+        local -a parts=($cmd)
+        for i in "${!parts[@]}"; do
+            if [[ "${parts[$i]}" == "-L" || "${parts[$i]}" == "-R" ]]; then
+                type_flag="${parts[$i]}"; current_spec="${parts[$i+1]}"; break
+            fi
+        done
+        current_host="${parts[-1]}"
+        local type_str="Unknown"
+        [[ "$type_flag" == "-L" ]] && type_str="Local"
+        [[ "$type_flag" == "-R" ]] && type_str="Remote"
+
+        out_pids+=("$pid")
+        out_types+=("$type_str")
+        out_specs+=("$current_spec")
+        out_hosts+=("$current_host")
+    done <<< "$active_forwards"
+
+    return 0
+}
+
+# Lists all active SSH port forwards found by the script.
+list_active_port_forwards() {
+    printBanner "Active Port Forwards"
+
+    local -a pids types specs hosts
+    if ! _get_active_port_forwards pids types specs hosts; then
+        printInfoMsg "No active SSH port forwards started by this script were found."
+        return
+    fi
+
+    local header; header=$(printf "%-10s %-8s %-30s %s" "PID" "TYPE" "FORWARD" "HOST")
+    printMsg "  ${C_WHITE}${header}${T_RESET}"
+
+    for i in "${!pids[@]}"; do
+        local formatted_string
+        formatted_string=$(printf "%-10s %-8s %-30s %s" "${pids[i]}" "${types[i]}" "${specs[i]}" "${hosts[i]}")
+        printMsg "  $formatted_string"
+    done
+}
+
+# Interactively stops an active SSH port forward.
+stop_port_forward() {
+    printBanner "Stop a Port Forward"
+
+    local -a pids types specs hosts
+    if ! _get_active_port_forwards pids types specs hosts; then
+        printInfoMsg "No active port forwards to stop."
+        return
+    fi
+
+    local -a menu_options
+    for i in "${!pids[@]}"; do
+        local formatted_string
+        formatted_string=$(printf "%-10s %-8s %-30s %s" "${pids[i]}" "${types[i]}" "${specs[i]}" "${hosts[i]}")
+        menu_options+=("$formatted_string")
+    done
+
+    local header
+    header=$(printf "  %-10s %-8s %-30s %s" "PID" "TYPE" "FORWARD" "HOST")
+
+    local selected_index
+    selected_index=$(interactive_single_select_menu "Select a port forward to stop:" "${C_WHITE}${header}${T_RESET}" "${menu_options[@]}")
+    [[ $? -ne 0 ]] && { printInfoMsg "Stop operation cancelled."; return; }
+
+    local pid_to_kill="${pids[$selected_index]}"; local spec_to_kill="${specs[$selected_index]}"; local host_to_kill="${hosts[$selected_index]}"
+    local question="Are you sure you want to stop the port forward:\n     ${C_L_CYAN}${spec_to_kill}${T_RESET} on ${C_L_CYAN}${host_to_kill}${T_RESET} (PID: ${pid_to_kill})?"
+    if prompt_yes_no "$question" "n"; then
+        run_with_spinner "Stopping port forward (PID: ${pid_to_kill})" kill "$pid_to_kill"
+    else
+        clear_lines_up 1
+        printInfoMsg "Stop operation cancelled."
+    fi
+}
+
+interactive_port_forward_manager() {
+    local -a ordered_options=(
+        "List active port forwards"
+        "Setup new Local forward (ssh -L)"
+        "Setup new Remote forward (ssh -R)"
+        "Stop a port forward"
+    )
+    local -A actions_map=(
+        ["List active port forwards"]="list_active_port_forwards"
+        ["Setup new Local forward (ssh -L)"]="setup_local_port_forward"
+        ["Setup new Remote forward (ssh -R)"]="setup_remote_port_forward"
+        ["Stop a port forward"]="stop_port_forward"
+    )
+    _run_submenu "Port Forwarding" ordered_options actions_map
+}
+
 # Backs up the SSH config file to a timestamped file.
 backup_ssh_config() {
     printBanner "Backup SSH Config"
@@ -1877,6 +2063,7 @@ main_loop() {
         local -a menu_options=(
             "Server Management"
             "Key Management"
+            "Port Forwarding"
             "Advanced Tools"
             "Exit"
         )
@@ -1888,6 +2075,7 @@ main_loop() {
         case "${menu_options[$selected_index]}" in
         "Server Management") server_menu ;;
         "Key Management") key_menu ;;
+        "Port Forwarding") interactive_port_forward_manager ;;
         "Advanced Tools") advanced_menu ;;
         "Exit") break ;;
         esac
