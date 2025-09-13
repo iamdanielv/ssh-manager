@@ -1431,33 +1431,12 @@ edit_ssh_host() {
         printInfoMsg "No changes detected. Host configuration remains unchanged."; sleep 1; return
     fi
 
-    # --- Key File Renaming/Copying Logic (if alias changed) ---
+    # --- Handle Key Management if Alias Changed ---
     if [[ "$new_alias" != "$original_alias" && -n "$new_identityfile" ]]; then
-        local expanded_old_key_path="${new_identityfile/#\~/$HOME}"
-        if [[ -f "$expanded_old_key_path" ]]; then
-            local -a hosts_sharing_key=(); mapfile -t all_hosts < <(get_ssh_hosts)
-            for other_host in "${all_hosts[@]}"; do
-                if [[ "$other_host" != "$original_alias" ]]; then
-                    local other_host_key; other_host_key=$(_get_explicit_ssh_config_value "$other_host" "IdentityFile")
-                    if [[ "$other_host_key" == "$new_identityfile" ]]; then hosts_sharing_key+=("$other_host"); fi
-                fi
-            done
-            local proposed_new_key_path="${SSH_DIR}/${new_alias}_id_ed25519"
-            if [[ ${#hosts_sharing_key[@]} -gt 0 ]]; then
-                local question="The key '${new_identityfile}' is shared by other hosts.\n    Do you want to create a dedicated COPY of this key for '${new_alias}'?\n    New key path: ${C_L_BLUE}${proposed_new_key_path}${T_RESET}"
-                if prompt_yes_no "$question" "y"; then
-                    if [[ -f "$proposed_new_key_path" || -f "${proposed_new_key_path}.pub" ]]; then printErrMsg "Cannot create key copy: target file '${proposed_new_key_path}' or its .pub already exists."
-                    elif run_with_spinner "Copying key files..." _copy_key_pair "$expanded_old_key_path" "$proposed_new_key_path"; then new_identityfile="$proposed_new_key_path"
-                    else printErrMsg "Failed to copy key files. The host was not changed."; sleep 2; return 1; fi
-                fi
-            elif [[ "$expanded_old_key_path" != "$proposed_new_key_path" ]]; then
-                local question="This host uses the key:\n    ${C_L_BLUE}${new_identityfile/#\~/$HOME}${T_RESET}\nDo you want to rename this key to match the new host alias?\n    New name: ${C_L_BLUE}${proposed_new_key_path}${T_RESET}"
-                if prompt_yes_no "$question" "y"; then
-                    if [[ -f "$proposed_new_key_path" || -f "${proposed_new_key_path}.pub" ]]; then printErrMsg "Cannot rename key: target file '${proposed_new_key_path}' or its .pub already exists."
-                    elif run_with_spinner "Renaming key files..." _rename_key_pair "$expanded_old_key_path" "$proposed_new_key_path"; then new_identityfile="$proposed_new_key_path"
-                    else printErrMsg "Failed to rename key files. The host was not changed."; sleep 2; return 1; fi
-                fi
-            fi
+        # This function will prompt the user and may update `new_identityfile`.
+        if ! _handle_key_management_on_alias_change new_identityfile "$original_alias" "$new_alias" "$new_identityfile"; then
+            printErrMsg "Host update aborted due to key management failure."; sleep 2
+            return 1
         fi
     fi
 
@@ -1469,6 +1448,65 @@ edit_ssh_host() {
     if [[ -n "$original_identityfile" && "$expanded_new_idfile" != "$expanded_orig_idfile" ]]; then
         _cleanup_orphaned_key "$original_identityfile"
     fi
+}
+
+# (Private) Handles renaming or copying a key file when a host's alias is changed.
+# If the key is shared, it offers to copy. If not, it offers to rename.
+# The new key path is returned via a nameref.
+# Usage: _handle_key_management_on_alias_change new_identityfile_var "$original_alias" "$new_alias" "$current_identityfile"
+# Returns 0 on success, 1 on failure.
+_handle_key_management_on_alias_change() {
+    local -n out_new_identityfile_ref="$1"
+    local original_alias="$2"
+    local new_alias="$3"
+    local current_identityfile="$4"
+
+    # If no identity file is set, there's nothing to do.
+    if [[ -z "$current_identityfile" ]]; then
+        return 0
+    fi
+
+    local expanded_old_key_path="${current_identityfile/#\~/$HOME}"
+    if [[ ! -f "$expanded_old_key_path" ]]; then
+        # Key file doesn't exist, so nothing to rename/copy.
+        return 0
+    fi
+
+    # Find if other hosts share this key.
+    local -a hosts_sharing_key=()
+    mapfile -t all_hosts < <(get_ssh_hosts)
+    for other_host in "${all_hosts[@]}"; do
+        if [[ "$other_host" != "$original_alias" ]]; then
+            local other_host_key; other_host_key=$(_get_explicit_ssh_config_value "$other_host" "IdentityFile")
+            if [[ "$other_host_key" == "$current_identityfile" ]]; then
+                hosts_sharing_key+=("$other_host")
+            fi
+        fi
+    done
+
+    # Propose a new key name based on the new host alias (convention).
+    local proposed_new_key_path="${SSH_DIR}/${new_alias}_id_ed25519"
+
+    if [[ ${#hosts_sharing_key[@]} -gt 0 ]]; then
+        # Key is shared, offer to COPY it.
+        local question="The key '${current_identityfile}' is shared by other hosts.\n    Do you want to create a dedicated COPY of this key for '${new_alias}'?\n    New key path: ${C_L_BLUE}${proposed_new_key_path}${T_RESET}"
+        if prompt_yes_no "$question" "y"; then
+            if [[ -f "$proposed_new_key_path" || -f "${proposed_new_key_path}.pub" ]]; then printErrMsg "Cannot create key copy: target file '${proposed_new_key_path}' or its .pub already exists."; return 1; fi
+            if run_with_spinner "Copying key files..." _copy_key_pair "$expanded_old_key_path" "$proposed_new_key_path"; then
+                out_new_identityfile_ref="$proposed_new_key_path" # Update the nameref to point to the new key path.
+            else printErrMsg "Failed to copy key files."; return 1; fi
+        fi
+    elif [[ "$expanded_old_key_path" != "$proposed_new_key_path" ]]; then
+        # Key is not shared, offer to RENAME it.
+        local question="This host uses the key:\n    ${C_L_BLUE}${current_identityfile/#\~/$HOME}${T_RESET}\nDo you want to rename this key to match the new host alias?\n    New name: ${C_L_BLUE}${proposed_new_key_path}${T_RESET}"
+        if prompt_yes_no "$question" "y"; then
+            if [[ -f "$proposed_new_key_path" || -f "${proposed_new_key_path}.pub" ]]; then printErrMsg "Cannot rename key: target file '${proposed_new_key_path}' or its .pub already exists."; return 1; fi
+            if run_with_spinner "Renaming key files..." _rename_key_pair "$expanded_old_key_path" "$proposed_new_key_path"; then
+                out_new_identityfile_ref="$proposed_new_key_path" # Update the nameref to point to the new key path.
+            else printErrMsg "Failed to rename key files."; return 1; fi
+        fi
+    fi
+    return 0
 }
 
 # Allows advanced editing of a host's config block directly in $EDITOR.
