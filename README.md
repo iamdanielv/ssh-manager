@@ -11,6 +11,7 @@ It is a single, self-contained `bash` script with no external dependencies beyon
 ## 🧩 Features
 
 - **Full Host Management**: Interactively connect, add, edit, rename, clone, and remove hosts.
+- **Interactive Port Forwarding**: A live TUI to view, add (local & remote), stop, and even clone active SSH port forwards.
 - **Connection Testing**: Test connectivity to a single host or all hosts in parallel.
 - **Key Management**: Generate new SSH key pairs (ed25519 or RSA) and copy public keys to a server with `ssh-copy-id`.
 - **Safe File Operations**:
