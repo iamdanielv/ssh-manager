@@ -613,6 +613,113 @@ _get_all_ssh_config_values_as_string() {
     '
 }
 
+# --- Core APIs (Private) ---
+
+# (Private) Generic function to process an SSH config file, filtering host blocks.
+# It can either keep only the matching block or remove it and keep everything else.
+# Usage: _process_ssh_config_blocks <target_host> <config_file> <mode>
+#   mode: 'keep' - prints only the block matching the target_host.
+#   mode: 'remove' - prints the entire file except for the matching block.
+_process_ssh_config_blocks() {
+    local target_host="$1"
+    local config_file="$2"
+    local mode="$3" # 'keep' or 'remove'
+
+    if [[ "$mode" != "keep" && "$mode" != "remove" ]]; then
+        printErrMsg "Invalid mode '${mode}' for _process_ssh_config_blocks" >&2
+        return 1
+    fi
+
+    awk -v target_host="$target_host" -v mode="$mode" '
+        # Flushes the buffered block based on whether it matches the target and the desired mode.
+        # It manages a single newline separator between printed blocks.
+        function flush_block() {
+            if (block != "") {
+                if ((mode == "keep" && is_target_block) || (mode == "remove" && !is_target_block)) {
+                    # If we have printed a block before, add a newline separator.
+                    if (output_started) {
+                        printf "\n"
+                    }
+                    printf "%s", block
+                    output_started = 1
+                }
+            }
+        }
+
+        # Match a new Host block definition.
+        /^[ \t]*[Hh][Oo][Ss][Tt][ \t]+/ {
+            flush_block() # Flush the previous block.
+
+            # Reset state for the new block.
+            block = $0
+            is_target_block = 0
+
+            # Check if this new block is the one we are looking for by iterating
+            # through the fields on the line, starting from the second field.
+            for (i = 2; i <= NF; i++) {
+                if ($i ~ /^#/) break # Stop at the first comment
+                if ($i == target_host) {
+                    is_target_block = 1
+                    break
+                }
+            }
+            next
+        }
+
+        # For any other line (part of a block, a comment, or a blank line):
+        {
+            if (block != "") {
+                block = block "\n" $0
+            } else {
+                # This is content before the first Host definition.
+                # It is never a target block, so print it only in "remove" mode.
+                if (mode == "remove") {
+                    printf "%s\n", $0
+                    output_started = 1
+                }
+            }
+        }
+
+        # At the end of the file, flush the last remaining block.
+        END {
+            flush_block()
+            if (output_started) {
+                printf "\n"
+            }
+        }
+    ' "$config_file"
+}
+
+# (Private) Reads an SSH config file and returns the block for a specific host.
+# Usage:
+#   local block
+#   block=$(_get_host_block_from_config "my-host" "/path/to/config")
+_get_host_block_from_config() {
+    local host_to_find="$1"
+    local config_file="$2"
+    _process_ssh_config_blocks "$host_to_find" "$config_file" "keep"
+}
+
+# (Private) Reads the SSH config and returns a new version with a specified host block removed.
+# Usage:
+#   local new_config
+#   new_config=$(_remove_host_block_from_config "my-host")
+#   echo "$new_config" > "$SSH_CONFIG_PATH"
+_remove_host_block_from_config() {
+    local host_to_remove="$1"
+    _process_ssh_config_blocks "$host_to_remove" "$SSH_CONFIG_PATH" "remove"
+}
+
+# (Private) Helper function to rename both private and public key files.
+# This is designed to be called by `run_with_spinner`.
+# Usage: _rename_key_pair <old_base_path> <new_base_path>
+_rename_key_pair() {
+    local old_base="$1"
+    local new_base="$2"
+    # The `&&` ensures we only try to move the public key if the private key move succeeds.
+    mv "${old_base}" "${new_base}" && mv "${old_base}.pub" "${new_base}.pub"
+}
+
 # Generates a list of formatted strings for the interactive menu,
 # showing details for each SSH host.
 # Populates an array whose name is passed as the first argument.
@@ -1062,205 +1169,60 @@ _prompt_for_unique_host_alias() {
     done
 }
 
-# (Private) A generic, reusable interactive loop for the host editors.
-# This function encapsulates the shared UI loop for adding, editing, and cloning hosts,
-# significantly reducing code duplication.
-#
-# It modifies the 'new_*' variables in the caller's scope via namerefs.
-#
-# Usage: _interactive_host_editor_loop <mode> <banner> <n_alias_var> ... <o_alias> ...
-# Returns 0 if the user chooses to save, 1 if they cancel/quit.
-_interactive_host_editor_loop() {
+# --- Host Editor Feature (Private Helpers) ---
+
+# (Private) Generic UI for the interactive host editors (add, edit, clone).
+# This single function replaces _draw_interactive_add_host_ui, _draw_interactive_edit_host_ui,
+# and _draw_interactive_clone_host_ui, reducing code duplication.
+# Usage: _draw_interactive_host_editor_ui <mode> <new_alias> <new_hostname> ... <original_alias> ...
+_draw_interactive_host_editor_ui() {
     local mode="$1"
-    local banner_text="$2"
-    # These are the *names* of the variables in the caller's scope.
-    local p_alias="$3" p_hostname="$4" p_user="$5" p_port="$6" p_identityfile="$7"
-    # Use namerefs internally for easier access to the values.
-    local -n n_alias="$p_alias" n_hostname="$p_hostname" n_user="$p_user" n_port="$p_port" n_identityfile="$p_identityfile"
-    # Original values are passed by value for comparison.
-    local original_alias="$8" original_hostname="$9" original_user="${10}" original_port="${11}" original_identityfile="${12}"
+    local new_alias="$2" new_hostname="$3" new_user="$4" new_port="$5" new_identityfile="$6"
+    local original_alias="$7" original_hostname="$8" original_user="$9" original_port="${10}" original_identityfile="${11}"
 
-    while true; do
-        clear
-        printBanner "$banner_text"
-        _draw_interactive_host_editor_ui "$mode" "$n_alias" "$n_hostname" "$n_user" "$n_port" "$n_identityfile" \
-                                         "$original_alias" "$original_hostname" "$original_user" "$original_port" "$original_identityfile"
+    # Helper to format a line, adding a change indicator (*) if needed.
+    _format_line() {
+        local key="$1" label="$2" new_val="$3" original_val="$4" is_alias="${5:-false}"
 
-        local key; key=$(read_single_char)
-        case "$key" in
-            '1')
-                # Edit Alias
-                local prompt="Enter a short alias for the host"
-                local old_alias_to_allow=""
-                if [[ "$mode" == "edit" ]]; then prompt="Enter the new alias for the host"; old_alias_to_allow="$original_alias"; fi
-                if [[ "$mode" == "clone" ]]; then prompt="Enter the new alias for the cloned host"; fi
-                _prompt_for_unique_host_alias "$p_alias" "$prompt" "$old_alias_to_allow" "$n_alias"
-                ;;
-            '2') prompt_for_input "HostName" "$p_hostname" "$n_hostname" ;;
-            '3') prompt_for_input "User" "$p_user" "$n_user" ;;
-            '4') prompt_for_input "Port" "$p_port" "$n_port" ;;
-            '5') clear_current_line; _prompt_for_identity_file_interactive "$p_identityfile" "$n_identityfile" "$n_alias" "$n_user" "$n_hostname" ;;
-            'c'|'C'|'d'|'D')
-                # Discard/Reset
-                clear_current_line
-                local question="Discard all pending changes?"
-                if [[ "$mode" == "add" ]]; then question="Discard all changes and reset fields?"; fi
-                if prompt_yes_no "$question" "y"; then
-                    n_alias="$original_alias"; n_hostname="$original_hostname"; n_user="$original_user"; n_port="$original_port"; n_identityfile="$original_identityfile"
-                    printInfoMsg "Changes discarded."; sleep 1
-                fi ;;
-            's'|'S') return 0 ;; # Signal to Save
-            'q'|'Q'|"$KEY_ESC")
-                # Quit
-                local expanded_new_idfile="${n_identityfile/#\~/$HOME}"; local expanded_orig_idfile="${original_identityfile/#\~/$HOME}"
-                if [[ "$n_alias" != "$original_alias" || "$n_hostname" != "$original_hostname" || "$n_user" != "$original_user" || "$n_port" != "$original_port" || "$expanded_new_idfile" != "$expanded_orig_idfile" ]]; then
-                    clear_current_line
-                    if prompt_yes_no "You have unsaved changes. Quit without saving?" "n"; then
-                        printInfoMsg "Operation cancelled."; sleep 1; return 1
-                    fi
-                else
-                    return 1 # No changes, just quit
-                fi ;;
-        esac
-    done
-}
+        local display_val="${new_val}"; if [[ "$label" == "IdentityFile" ]]; then display_val="${new_val/#$HOME/\~}"; fi
+        if [[ -z "$display_val" ]]; then display_val="${C_GRAY}(not set)${T_RESET}"; else display_val="${C_L_CYAN}${display_val}${T_RESET}"; fi
 
-# Prompts user for details and adds a new host to the SSH config.
-add_ssh_host() {
-    printBanner "Add New SSH Host"
+        local change_indicator=" "
+        # In 'add' mode, there are no "changes" from an original, so no indicator.
+        if [[ "$mode" != "add" ]]; then
+            if [[ "$is_alias" == "true" ]]; then
+                if [[ "$new_val" != "$original_val" ]]; then change_indicator="${C_L_YELLOW}*${T_RESET}"; fi
+            else
+                local expanded_new_val="${new_val/#\~/$HOME}"
+                if [[ "$expanded_new_val" != "${original_val/#\~/$HOME}" ]]; then change_indicator="${C_L_YELLOW}*${T_RESET}"; fi
+            fi
+        fi
 
-    # --- Step 1: Choose to create from scratch or clone ---
-    local -a add_options=("Create a new host from scratch" "Clone settings from an existing host")
-    local add_choice_idx
-    add_choice_idx=$(interactive_single_select_menu "How would you like to add the new host?" "" "${add_options[@]}")
-    if [[ $? -ne 0 ]]; then printInfoMsg "Host creation cancelled."; return; fi
+        # For clone mode, the alias is always considered a change.
+        if [[ "$mode" == "clone" && "$label" == "Host (Alias)" ]]; then change_indicator="${C_L_YELLOW}*${T_RESET}"; fi
 
-    # --- Step 2: Handle choice ---
-    if [[ "${add_options[$add_choice_idx]}" == "Clone settings from an existing host" ]]; then
-        # Delegate to the dedicated clone function.
-        clone_ssh_host
-        return
-    fi
+        printf "  ${C_L_WHITE}%s)${T_RESET} %b %-15s: %b\n" "$key" "$change_indicator" "$label" "$display_val"
+    }
 
-    # --- Create from scratch logic ---
-    local initial_alias="" initial_hostname="" initial_user="$USER" initial_port="22" initial_identityfile=""
-    local new_alias="$initial_alias" new_hostname="$initial_hostname" new_user="$initial_user" new_port="$initial_port" new_identityfile="$initial_identityfile"
+    local title="Configure the host details:"
+    if [[ "$mode" == "add" ]]; then title="Configure the new host:"; fi
+    if [[ "$mode" == "clone" ]]; then title="Configure the new cloned host:"; fi
+    printMsg "$title"
 
-    local banner_text="Add New SSH Host"
+    _format_line "1" "Host (Alias)" "$new_alias" "$original_alias" "true"
+    _format_line "2" "HostName"     "$new_hostname" "$original_hostname"
+    _format_line "3" "User"         "$new_user" "$original_user"
+    _format_line "4" "Port"         "$new_port" "$original_port"
+    _format_line "5" "IdentityFile" "$new_identityfile" "$original_identityfile"
 
-    # Call the shared editor loop. It will modify the 'new_*' variables.
-    if ! _interactive_host_editor_loop "add" "$banner_text" \
-        new_alias new_hostname new_user new_port new_identityfile \
-        "$initial_alias" "$initial_hostname" "$initial_user" "$initial_port" "$initial_identityfile"; then
-        return # User cancelled
-    fi
-
-    # --- Save Logic ---
-    if [[ -z "$new_alias" || -z "$new_hostname" ]]; then printErrMsg "Host Alias and HostName cannot be empty."; sleep 2; return 1; fi
-    if get_ssh_hosts | grep -qFx "$new_alias"; then printErrMsg "Host alias '${new_alias}' already exists."; sleep 2; return 1; fi
-
-    _append_host_to_config "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile"
-
-    if [[ -n "$new_identityfile" ]]; then
-        # When creating from scratch, it's more likely the user wants to copy the key immediately.
-        if prompt_yes_no "Copy public key to the new server now?" "y"; then copy_ssh_id_for_host "$new_alias" "${new_identityfile}.pub"; fi
-    fi
-    if prompt_yes_no "Test the connection to '${new_alias}' now?" "y"; then echo; _test_connection_for_host "$new_alias"; fi
-}
-
-# (Private) Generic function to process an SSH config file, filtering host blocks.
-# It can either keep only the matching block or remove it and keep everything else.
-# Usage: _process_ssh_config_blocks <target_host> <config_file> <mode>
-#   mode: 'keep' - prints only the block matching the target_host.
-#   mode: 'remove' - prints the entire file except for the matching block.
-_process_ssh_config_blocks() {
-    local target_host="$1"
-    local config_file="$2"
-    local mode="$3" # 'keep' or 'remove'
-
-    if [[ "$mode" != "keep" && "$mode" != "remove" ]]; then
-        printErrMsg "Invalid mode '${mode}' for _process_ssh_config_blocks" >&2
-        return 1
-    fi
-
-    awk -v target_host="$target_host" -v mode="$mode" '
-        # Flushes the buffered block based on whether it matches the target and the desired mode.
-        # It manages a single newline separator between printed blocks.
-        function flush_block() {
-            if (block != "") {
-                if ((mode == "keep" && is_target_block) || (mode == "remove" && !is_target_block)) {
-                    # If we have printed a block before, add a newline separator.
-                    if (output_started) {
-                        printf "\n"
-                    }
-                    printf "%s", block
-                    output_started = 1
-                }
-            }
-        }
-
-        # Match a new Host block definition.
-        /^[ \t]*[Hh][Oo][Ss][Tt][ \t]+/ {
-            flush_block() # Flush the previous block.
-
-            # Reset state for the new block.
-            block = $0
-            is_target_block = 0
-
-            # Check if this new block is the one we are looking for by iterating
-            # through the fields on the line, starting from the second field.
-            for (i = 2; i <= NF; i++) {
-                if ($i ~ /^#/) break # Stop at the first comment
-                if ($i == target_host) {
-                    is_target_block = 1
-                    break
-                }
-            }
-            next
-        }
-
-        # For any other line (part of a block, a comment, or a blank line):
-        {
-            if (block != "") {
-                block = block "\n" $0
-            } else {
-                # This is content before the first Host definition.
-                # It is never a target block, so print it only in "remove" mode.
-                if (mode == "remove") {
-                    printf "%s\n", $0
-                    output_started = 1
-                }
-            }
-        }
-
-        # At the end of the file, flush the last remaining block.
-        END {
-            flush_block()
-            if (output_started) {
-                printf "\n"
-            }
-        }
-    ' "$config_file"
-}
-
-# (Private) Reads the SSH config and returns a new version with a specified host block removed.
-# Usage:
-#   local new_config
-#   new_config=$(_remove_host_block_from_config "my-host")
-#   echo "$new_config" > "$SSH_CONFIG_PATH"
-_remove_host_block_from_config() {
-    local host_to_remove="$1"
-    _process_ssh_config_blocks "$host_to_remove" "$SSH_CONFIG_PATH" "remove"
-}
-
-# (Private) Reads an SSH config file and returns the block for a specific host.
-# Usage:
-#   local block
-#   block=$(_get_host_block_from_config "my-host" "/path/to/config")
-_get_host_block_from_config() {
-    local host_to_find="$1"
-    local config_file="$2"
-    _process_ssh_config_blocks "$host_to_find" "$config_file" "keep"
+    echo
+    local discard_text="iscard all pending changes"
+    if [[ "$mode" == "add" ]]; then discard_text="eset fields"; fi
+    printMsg "  ${C_L_WHITE}c) ${C_L_YELLOW}(C)ancel/(D)${discard_text}${T_RESET}"
+    printMsg "  ${C_L_WHITE}s) ${C_L_GREEN}(S)ave${T_RESET} and Quit"
+    printMsg "  ${C_L_WHITE}q) ${C_L_YELLOW}(Q)uit${T_RESET} without saving (or press ${C_L_YELLOW}ESC${T_RESET})"
+    echo
+    printMsgNoNewline "${T_QST_ICON} Your choice: "
 }
 
 # (Private) Interactively prompts the user to select or create an IdentityFile when editing a host.
@@ -1338,58 +1300,121 @@ _prompt_for_identity_file_interactive() {
     done
 }
 
-# (Private) Generic UI for the interactive host editors (add, edit, clone).
-# This single function replaces _draw_interactive_add_host_ui, _draw_interactive_edit_host_ui,
-# and _draw_interactive_clone_host_ui, reducing code duplication.
-# Usage: _draw_interactive_host_editor_ui <mode> <new_alias> <new_hostname> ... <original_alias> ...
-_draw_interactive_host_editor_ui() {
+# --- Host Lifecycle Functions ---
+
+# Prompts user for details and adds a new host to the SSH config.
+add_ssh_host() {
+    printBanner "Add New SSH Host"
+
+    # --- Step 1: Choose to create from scratch or clone ---
+    local -a add_options=("Create a new host from scratch" "Clone settings from an existing host")
+    local add_choice_idx
+    add_choice_idx=$(interactive_single_select_menu "How would you like to add the new host?" "" "${add_options[@]}")
+    if [[ $? -ne 0 ]]; then printInfoMsg "Host creation cancelled."; return; fi
+
+    # --- Step 2: Handle choice ---
+    if [[ "${add_options[$add_choice_idx]}" == "Clone settings from an existing host" ]]; then
+        # Delegate to the dedicated clone function.
+        clone_ssh_host
+        return
+    fi
+
+    # --- Create from scratch logic ---
+    local initial_alias="" initial_hostname="" initial_user="$USER" initial_port="22" initial_identityfile=""
+    local new_alias="$initial_alias" new_hostname="$initial_hostname" new_user="$initial_user" new_port="$initial_port" new_identityfile="$initial_identityfile"
+
+    local banner_text="Add New SSH Host"
+
+    # Call the shared editor loop. It will modify the 'new_*' variables.
+    if ! _interactive_host_editor_loop "add" "$banner_text" \
+        new_alias new_hostname new_user new_port new_identityfile \
+        "$initial_alias" "$initial_hostname" "$initial_user" "$initial_port" "$initial_identityfile"; then
+        return # User cancelled
+    fi
+
+    # --- Save Logic ---
+    if [[ -z "$new_alias" || -z "$new_hostname" ]]; then printErrMsg "Host Alias and HostName cannot be empty."; sleep 2; return 1; fi
+    if get_ssh_hosts | grep -qFx "$new_alias"; then printErrMsg "Host alias '${new_alias}' already exists."; sleep 2; return 1; fi
+
+    _append_host_to_config "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile"
+
+    if [[ -n "$new_identityfile" ]]; then
+        # When creating from scratch, it's more likely the user wants to copy the key immediately.
+        if prompt_yes_no "Copy public key to the new server now?" "y"; then copy_ssh_id_for_host "$new_alias" "${new_identityfile}.pub"; fi
+    fi
+    if prompt_yes_no "Test the connection to '${new_alias}' now?" "y"; then echo; _test_connection_for_host "$new_alias"; fi
+}
+
+# (Private) A generic, reusable interactive loop for the host editors.
+# This function encapsulates the shared UI loop for adding, editing, and cloning hosts,
+# significantly reducing code duplication.
+#
+# It modifies the 'new_*' variables in the caller's scope via namerefs.
+#
+# Usage: _interactive_host_editor_loop <mode> <banner> <n_alias_var> ... <o_alias> ...
+# Returns 0 if the user chooses to save, 1 if they cancel/quit.
+_interactive_host_editor_loop() {
     local mode="$1"
-    local new_alias="$2" new_hostname="$3" new_user="$4" new_port="$5" new_identityfile="$6"
-    local original_alias="$7" original_hostname="$8" original_user="$9" original_port="${10}" original_identityfile="${11}"
+    local banner_text="$2"
+    # These are the *names* of the variables in the caller's scope.
+    local p_alias="$3" p_hostname="$4" p_user="$5" p_port="$6" p_identityfile="$7"
+    # Use namerefs internally for easier access to the values.
+    local -n n_alias="$p_alias" n_hostname="$p_hostname" n_user="$p_user" n_port="$p_port" n_identityfile="$p_identityfile"
+    # Original values are passed by value for comparison.
+    local original_alias="$8" original_hostname="$9" original_user="${10}" original_port="${11}" original_identityfile="${12}"
 
-    # Helper to format a line, adding a change indicator (*) if needed.
-    _format_line() {
-        local key="$1" label="$2" new_val="$3" original_val="$4" is_alias="${5:-false}"
+    while true; do
+        clear
+        printBanner "$banner_text"
+        _draw_interactive_host_editor_ui "$mode" "$n_alias" "$n_hostname" "$n_user" "$n_port" "$n_identityfile" \
+                                         "$original_alias" "$original_hostname" "$original_user" "$original_port" "$original_identityfile"
 
-        local display_val="${new_val}"; if [[ "$label" == "IdentityFile" ]]; then display_val="${new_val/#$HOME/\~}"; fi
-        if [[ -z "$display_val" ]]; then display_val="${C_GRAY}(not set)${T_RESET}"; else display_val="${C_L_CYAN}${display_val}${T_RESET}"; fi
+        local key; key=$(read_single_char)
+        case "$key" in
+            '1')
+                # Edit Alias
+                local prompt="Enter a short alias for the host"
+                local old_alias_to_allow=""
+                if [[ "$mode" == "edit" ]]; then prompt="Enter the new alias for the host"; old_alias_to_allow="$original_alias"; fi
+                if [[ "$mode" == "clone" ]]; then prompt="Enter the new alias for the cloned host"; fi
+                _prompt_for_unique_host_alias "$p_alias" "$prompt" "$old_alias_to_allow" "$n_alias"
+                ;;
+            '2') prompt_for_input "HostName" "$p_hostname" "$n_hostname" ;;
+            '3') prompt_for_input "User" "$p_user" "$n_user" ;;
+            '4') prompt_for_input "Port" "$p_port" "$n_port" ;;
+            '5') clear_current_line; _prompt_for_identity_file_interactive "$p_identityfile" "$n_identityfile" "$n_alias" "$n_user" "$n_hostname" ;;
+            'c'|'C'|'d'|'D')
+                # Discard/Reset
+                clear_current_line
+                local question="Discard all pending changes?"
+                if [[ "$mode" == "add" ]]; then question="Discard all changes and reset fields?"; fi
+                if prompt_yes_no "$question" "y"; then
+                    n_alias="$original_alias"; n_hostname="$original_hostname"; n_user="$original_user"; n_port="$original_port"; n_identityfile="$original_identityfile"
+                    printInfoMsg "Changes discarded."; sleep 1
+                fi ;;
+            's'|'S') return 0 ;; # Signal to Save
+            'q'|'Q'|"$KEY_ESC")
+                # Quit
+                local expanded_new_idfile="${n_identityfile/#\~/$HOME}"; local expanded_orig_idfile="${original_identityfile/#\~/$HOME}"
+                if [[ "$n_alias" != "$original_alias" || "$n_hostname" != "$original_hostname" || "$n_user" != "$original_user" || "$n_port" != "$original_port" || "$expanded_new_idfile" != "$expanded_orig_idfile" ]]; then
+                    clear_current_line
+                    if prompt_yes_no "You have unsaved changes. Quit without saving?" "n"; then
+                        printInfoMsg "Operation cancelled."; sleep 1; return 1
+                    fi
+                else
+                    return 1 # No changes, just quit
+                fi ;;
+        esac
+    done
+}
 
-        local change_indicator=" "
-        # In 'add' mode, there are no "changes" from an original, so no indicator.
-        if [[ "$mode" != "add" ]]; then
-            if [[ "$is_alias" == "true" ]]; then
-                if [[ "$new_val" != "$original_val" ]]; then change_indicator="${C_L_YELLOW}*${T_RESET}"; fi
-            else
-                local expanded_new_val="${new_val/#\~/$HOME}"
-                if [[ "$expanded_new_val" != "${original_val/#\~/$HOME}" ]]; then change_indicator="${C_L_YELLOW}*${T_RESET}"; fi
-            fi
-        fi
-
-        # For clone mode, the alias is always considered a change.
-        if [[ "$mode" == "clone" && "$label" == "Host (Alias)" ]]; then change_indicator="${C_L_YELLOW}*${T_RESET}"; fi
-
-        printf "  ${C_L_WHITE}%s)${T_RESET} %b %-15s: %b\n" "$key" "$change_indicator" "$label" "$display_val"
-    }
-
-    local title="Configure the host details:"
-    if [[ "$mode" == "add" ]]; then title="Configure the new host:"; fi
-    if [[ "$mode" == "clone" ]]; then title="Configure the new cloned host:"; fi
-    printMsg "$title"
-
-    _format_line "1" "Host (Alias)" "$new_alias" "$original_alias" "true"
-    _format_line "2" "HostName"     "$new_hostname" "$original_hostname"
-    _format_line "3" "User"         "$new_user" "$original_user"
-    _format_line "4" "Port"         "$new_port" "$original_port"
-    _format_line "5" "IdentityFile" "$new_identityfile" "$original_identityfile"
-
-    echo
-    local discard_text="iscard all pending changes"
-    if [[ "$mode" == "add" ]]; then discard_text="eset fields"; fi
-    printMsg "  ${C_L_WHITE}c) ${C_L_YELLOW}(C)ancel/(D)${discard_text}${T_RESET}"
-    printMsg "  ${C_L_WHITE}s) ${C_L_GREEN}(S)ave${T_RESET} and Quit"
-    printMsg "  ${C_L_WHITE}q) ${C_L_YELLOW}(Q)uit${T_RESET} without saving (or press ${C_L_YELLOW}ESC${T_RESET})"
-    echo
-    printMsgNoNewline "${T_QST_ICON} Your choice: "
+# (Private) Helper function to copy both private and public key files.
+# This is designed to be called by `run_with_spinner`.
+# Usage: _copy_key_pair <source_base_path> <dest_base_path>
+_copy_key_pair() {
+    local source_base="$1"
+    local dest_base="$2"
+    cp "${source_base}" "${dest_base}" && cp "${source_base}.pub" "${dest_base}.pub"
 }
 
 # Edits an existing host in the SSH config.
@@ -1503,6 +1528,7 @@ _handle_key_management_on_alias_change() {
     fi
     return 0
 }
+
 
 # Allows advanced editing of a host's config block directly in $EDITOR.
 edit_ssh_host_in_editor() {
@@ -1702,25 +1728,6 @@ reorder_ssh_hosts() {
         printErrMsg "Failed to re-order hosts. Your original config is safe."
         printInfoMsg "The backup of your config is available at: ${backup_file}"
     fi
-}
-
-# (Private) Helper function to rename both private and public key files.
-# This is designed to be called by `run_with_spinner`.
-# Usage: _rename_key_pair <old_base_path> <new_base_path>
-_rename_key_pair() {
-    local old_base="$1"
-    local new_base="$2"
-    # The `&&` ensures we only try to move the public key if the private key move succeeds.
-    mv "${old_base}" "${new_base}" && mv "${old_base}.pub" "${new_base}.pub"
-}
-
-# (Private) Helper function to copy both private and public key files.
-# This is designed to be called by `run_with_spinner`.
-# Usage: _copy_key_pair <source_base_path> <dest_base_path>
-_copy_key_pair() {
-    local source_base="$1"
-    local dest_base="$2"
-    cp "${source_base}" "${dest_base}" && cp "${source_base}.pub" "${dest_base}.pub"
 }
 
 # (Private) Checks for and offers to remove an orphaned key file.
