@@ -1336,6 +1336,21 @@ _prompt_for_identity_file_interactive() {
     done
 }
 
+# (Private) Draws the current details of the host being edited in a menu.
+_draw_edit_host_details() {
+    local hostname="$1"
+    local user="$2"
+    local port="$3"
+    local identityfile="$4"
+
+    #printMsg "${C_GRAY}${DIV}${T_RESET}"
+    printMsg "$(printf "  %-15s: %s" "HostName" "${C_L_CYAN}${hostname}${T_RESET}")"
+    printMsg "$(printf "  %-15s: %s" "User" "${C_L_CYAN}${user}${T_RESET}")"
+    printMsg "$(printf "  %-15s: %s" "Port" "${C_L_CYAN}${port}${T_RESET}")"
+    printMsg "$(printf "  %-15s: %s" "IdentityFile" "${C_L_CYAN}${identityfile:-(not set)}${T_RESET}")"
+    printMsg "${C_GRAY}${DIV}${T_RESET}"
+}
+
 # Edits an existing host in the SSH config.
 edit_ssh_host() {
     printBanner "Edit SSH Host"
@@ -1346,38 +1361,61 @@ edit_ssh_host() {
         [[ $? -ne 0 ]] && return
     fi
 
-    printInfoMsg "Editing configuration for: ${C_L_CYAN}${host_to_edit}${T_RESET}"
-    printMsg "${C_L_GRAY}(Press Enter to keep the current value)${T_RESET}"
-
-    # Get current values to use as defaults in prompts, using the efficient helper.
-    local current_hostname current_user current_port current_identityfile
+    # Get original values to compare against for changes.
+    local original_hostname original_user original_port original_identityfile
     local details; details=$(_get_all_ssh_config_values_as_string "$host_to_edit")
-    eval "$details" # Sets hostname, user, port
+    # Use parameter expansion to rename the 'current_*' variables from the helper to 'original_*'.
+    eval "${details//current/original}" # Sets original_hostname, original_user, original_port
+    original_identityfile=$(_get_explicit_ssh_config_value "$host_to_edit" "IdentityFile")
+    [[ -z "$original_port" ]] && original_port="22"
 
-    # Now, explicitly get the identity file to avoid using ssh -G defaults for the prompt.
-    current_identityfile=$(_get_explicit_ssh_config_value "$host_to_edit" "IdentityFile")
+    # These variables will hold the values as they are being edited.
+    local new_hostname="$original_hostname" new_user="$original_user" new_port="$original_port" new_identityfile="$original_identityfile"
 
-    # Prompt for new values
-    local new_hostname new_user new_port new_identityfile
-    prompt_for_input "HostName" new_hostname "$current_hostname" || return
-    prompt_for_input "User" new_user "$current_user" || return
-    prompt_for_input "Port" new_port "${current_port:-22}" || return
+    while true; do
+        clear
+        printBanner "Edit SSH Host - ${C_L_CYAN}${host_to_edit}${C_BLUE}"
+        _draw_edit_host_details "$new_hostname" "$new_user" "$new_port" "$new_identityfile"
 
-    # Use the new interactive menu for IdentityFile selection
-    if ! _prompt_for_identity_file_interactive new_identityfile "$current_identityfile" "$host_to_edit" "$new_user" "$new_hostname"; then
-        printInfoMsg "Host edit cancelled during key selection."
-        return
-    fi
+        local -a menu_options=(
+            "Edit HostName"
+            "Edit User"
+            "Edit Port"
+            "Edit IdentityFile"
+            "Save and Exit"
+            "Cancel"
+        )
+
+        local selected_index; selected_index=$(interactive_single_select_menu "Select a field to edit:" "" "${menu_options[@]}")
+        if [[ $? -ne 0 ]]; then printInfoMsg "Edit cancelled. No changes were saved."; return; fi
+        local selected_option="${menu_options[$selected_index]}"
+
+        case "$selected_option" in
+            "Edit HostName") prompt_for_input "HostName" new_hostname "$new_hostname" ;;
+            "Edit User") prompt_for_input "User" new_user "$new_user" ;;
+            "Edit Port") prompt_for_input "Port" new_port "$new_port" ;;
+            "Edit IdentityFile")
+                # This function is already a menu, so it fits perfectly.
+                _prompt_for_identity_file_interactive new_identityfile "$new_identityfile" "$host_to_edit" "$new_user" "$new_hostname"
+                ;;
+            "Save and Exit") break ;;
+            "Cancel") printInfoMsg "Edit cancelled. No changes were saved."; return ;;
+        esac
+    done
 
     # Check if any changes were actually made before rewriting the file.
-    # This provides better feedback and avoids unnecessary file I/O.
-    if [[ "$new_hostname" == "$current_hostname" && \
-          "$new_user" == "$current_user" && \
-          "$new_port" == "${current_port:-22}" && \
-          "$new_identityfile" == "$current_identityfile" ]]; then
+    if [[ "$new_hostname" == "$original_hostname" && \
+          "$new_user" == "$original_user" && \
+          "$new_port" == "$original_port" && \
+          "$new_identityfile" == "$original_identityfile" ]]; then
         printInfoMsg "No changes detected. Host configuration remains unchanged."
         return
     fi
+
+    # If the user or hostname changed, the IdentityFile prompt might need to be re-evaluated
+    # if it was generated with the old values. The current implementation is simple and
+    # doesn't handle this complex dependency, which is an acceptable trade-off for the
+    # improved UX. The user can simply re-edit the IdentityFile if needed.
 
     # Get the config content without the old host block
     local config_without_host
@@ -1388,18 +1426,14 @@ edit_ssh_host() {
     new_host_block=$(_build_host_block_string "$host_to_edit" "$new_hostname" "$new_user" "$new_port" "$new_identityfile")
 
     # Combine the existing config (minus the old block) with the new block and write to the file
-    # The `\n` ensures separation if the old block was the last one in the file.
-    # We use `\n\n` to ensure a blank line separator, and `cat -s` squeezes any potential
-    # extra blank lines if the remaining config already had them.
     echo -e "${config_without_host}\n\n${new_host_block}" | cat -s > "$SSH_CONFIG_PATH"
 
     printOkMsg "Host '${host_to_edit}' has been updated."
 
     # --- Cleanup ---
     # If the identity file was changed or removed, check if the old key is now orphaned.
-    if [[ -n "$current_identityfile" && "$current_identityfile" != "$new_identityfile" ]]; then
-        # The _cleanup_orphaned_key function will check if any other hosts are still using it.
-        _cleanup_orphaned_key "$current_identityfile"
+    if [[ -n "$original_identityfile" && "$original_identityfile" != "$new_identityfile" ]]; then
+        _cleanup_orphaned_key "$original_identityfile"
     fi
 }
 
