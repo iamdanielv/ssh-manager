@@ -805,7 +805,7 @@ _generate_and_get_dedicated_key() {
     local new_key_path="${SSH_DIR}/${host_alias}_id_ed25519"
     local should_generate=true
     if [[ -f "$new_key_path" ]]; then
-        prompt_yes_no "Key file '${new_key_path}' already exists. Overwrite it?" "n"
+        prompt_yes_no "Key file '${new_key_path}' already exists.\n    Overwrite it?" "n"
         local overwrite_choice=$?
         if [[ $overwrite_choice -eq 1 ]]; then # No
             should_generate=false
@@ -1162,7 +1162,7 @@ _prompt_for_identity_file_interactive() {
                 local new_key_filename; local default_key_name="${host_alias}_id_ed25519"
                 prompt_for_input "Enter filename for new key (in ${SSH_DIR})" new_key_filename "$default_key_name" || continue
                 local new_key_path="${SSH_DIR}/${new_key_filename}"
-                if [[ -f "$new_key_path" ]] && ! prompt_yes_no "Key file '${new_key_path}' already exists. Overwrite?" "n"; then
+                if [[ -f "$new_key_path" ]] && ! prompt_yes_no "Key file '${new_key_path}' already exists.\n    Overwrite?" "n"; then
                     printInfoMsg "Key generation cancelled."; continue
                 fi
                 if run_with_spinner "Generating new ed25519 key..." ssh-keygen -t ed25519 -f "$new_key_path" -N "" -C "${user}@${hostname}"; then
@@ -1409,7 +1409,7 @@ reorder_ssh_hosts() {
     fi
 
     printWarnMsg "This action will rewrite your SSH config file to apply the new order."
-    if ! prompt_yes_no "It preserves most content but may lose comments between hosts. A backup will be created. Continue?" "n"; then
+    if ! prompt_yes_no "This may lose comments between hosts. A backup will be created.\n    Continue with re-ordering?" "n"; then
         printInfoMsg "Re-ordering cancelled."
         return
     fi
@@ -1531,7 +1531,7 @@ _cleanup_orphaned_key() {
     done
 
     # 5. If we get here, the key is not used by any other host. Prompt for deletion.
-    if prompt_yes_no "The key '${key_file_path}' is no longer referenced by any host. Remove it and its .pub file?" "n"; then
+    if prompt_yes_no "The key '${key_file_path}' is no longer referenced by any host.\n    Remove it and its .pub file?" "n"; then
         rm -f "${expanded_key_path}" "${expanded_key_path}.pub"
         printOkMsg "Removed key files."
     fi
@@ -1547,7 +1547,7 @@ remove_ssh_host() {
         [[ $? -ne 0 ]] && return
     fi
 
-    if ! prompt_yes_no "Are you sure you want to remove '${host_to_remove}' from your SSH config?" "n"; then
+    if ! prompt_yes_no "Are you sure you want to remove '${host_to_remove}'?\n    This will permanently delete the host from your config." "n"; then
         printInfoMsg "Removal cancelled."
         return
     fi
@@ -2213,7 +2213,13 @@ interactive_server_management_view() {
             "$KEY_DOWN"|"j")
                 if (( num_options > 0 )); then current_option=$(( (current_option + 1) % num_options )); fi ;;
             "$KEY_ENTER")
-                if [[ -n "$selected_host" ]]; then clear; exec ssh "$selected_host"; fi ;;
+                if [[ -n "$selected_host" ]]; then
+                    # Ask for confirmation before connecting to prevent accidental connections.
+                    if prompt_yes_no "Connect to '${selected_host}'?" "y"; then
+                        clear
+                        exec ssh "$selected_host"
+                    fi
+                fi ;;
             'a'|'A')
                 run_menu_action "add_ssh_host" ;;
             'e')
