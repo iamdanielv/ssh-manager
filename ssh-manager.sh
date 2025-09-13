@@ -230,20 +230,28 @@ prompt_to_continue() {
 interactive_multi_select_menu() {
     # Ensure the script is running in an interactive terminal
     if ! [[ -t 0 ]]; then printErrMsg "Not an interactive session." >&2; return 1; fi
-    local prompt="$1"; shift; local -a options=("$@"); local num_options=${#options[@]}
+    local prompt="$1"; local header="$2"; shift 2; local -a options=("$@"); local num_options=${#options[@]}
     if [[ $num_options -eq 0 ]]; then printErrMsg "No options provided to menu." >&2; return 1; fi
     local current_option=0; local -a selected_options=(); for ((i=0; i<num_options; i++)); do selected_options[i]=0; done
+    local header_lines=0
+    if [[ -n "$header" ]]; then
+        header_lines=$(echo -e "$header" | wc -l)
+    fi
     _draw_menu_options() {
         local output=""; for i in "${!options[@]}"; do
             local pointer=" "; local checkbox="[ ]"; local highlight_start=""; local highlight_end=""
             if (( selected_options[i] == 1 )); then checkbox="${C_GREEN}${T_BOLD}[✓]${T_RESET}"; fi
             if (( i == current_option )); then pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"; highlight_start="${T_REVERSE}"; highlight_end="${T_RESET}"; fi
-            output+="  ${pointer} ${highlight_start}${checkbox} ${options[i]}${highlight_end}${T_RESET}${T_CLEAR_LINE}\n"; done
+            output+=" ${pointer} ${highlight_start}${checkbox} ${options[i]}${highlight_end}${T_RESET}${T_CLEAR_LINE}\n"; done
         echo -ne "$output"; }
     printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty; trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty' EXIT
     echo -e "${C_GRAY}(Use ${C_L_CYAN}↓/↑${C_GRAY} to navigate, ${C_L_CYAN}space${C_GRAY} to select, ${C_L_GREEN}enter${C_GRAY} to confirm, ${C_L_YELLOW}q/esc${C_GRAY} to cancel)${T_RESET}" >/dev/tty
-    echo -e "${T_QST_ICON} ${prompt}" >/dev/tty; echo -e "${C_GRAY}${DIV}${T_RESET}" >/dev/tty; _draw_menu_options >/dev/tty
-    local key; local menu_height=$((num_options + 3)); while true; do
+    echo -e "${T_QST_ICON} ${prompt}" >/dev/tty; echo -e "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
+    if [[ -n "$header" ]]; then
+        echo -e "  ${header}${T_RESET}" >/dev/tty
+    fi
+    _draw_menu_options >/dev/tty
+    local key; local menu_height=$((num_options + 3 + header_lines)); while true; do
         move_cursor_up "$num_options"; key=$(read_single_char </dev/tty)
         case "$key" in
             "$KEY_UP"|"k") current_option=$(( (current_option - 1 + num_options) % num_options ));;
@@ -253,7 +261,13 @@ interactive_multi_select_menu() {
                     if (( current_option == 0 )); then local all_state=${selected_options[0]}; for i in "${!options[@]}"; do selected_options[i]=$all_state; done
                     else local all_selected=1; for ((i=1; i<num_options; i++)); do if (( selected_options[i] == 0 )); then all_selected=0; break; fi; done; selected_options[0]=$all_selected; fi
                 fi;;
-            "$KEY_ENTER"|"$KEY_ESC"|"q") clear_lines_down "$menu_height"; if [[ "$key" == "$KEY_ENTER" ]]; then break; else return 1; fi;;
+            "$KEY_ENTER"|"$KEY_ESC"|"q")
+                clear_lines_down "$menu_height"; clear_lines_up $((3 + header_lines))
+                if [[ "$key" == "$KEY_ENTER" ]]; then
+                    break
+                else
+                    return 1
+                fi;;
         esac; _draw_menu_options >/dev/tty; done
     local has_selection=0; for i in "${!options[@]}"; do if [[ ${selected_options[i]} -eq 1 ]]; then has_selection=1; echo "$i"; fi; done
     if [[ $has_selection -eq 1 ]]; then return 0; else return 1; fi
@@ -483,7 +497,8 @@ _get_all_ssh_config_values_as_string() {
 #   local -a my_menu_options
 #   get_detailed_ssh_hosts_menu_options my_menu_options
 get_detailed_ssh_hosts_menu_options() {
-    local -n out_array=$1 # Use nameref to populate the caller's array
+    local -n out_array="$1" # Use nameref to populate the caller's array
+    local show_key_info="${2:-true}"
     local -a hosts
     mapfile -t hosts < <(get_ssh_hosts)
 
@@ -502,7 +517,7 @@ get_detailed_ssh_hosts_menu_options() {
         eval "$details"
         # Clean up identity file path for display
         local key_info=""
-        if [[ -n "$current_identityfile" ]]; then
+        if [[ "$show_key_info" == "true" && -n "$current_identityfile" ]]; then
             # Using #$HOME is safer than a simple string replacement
             key_info=" (${C_WHITE}${current_identityfile/#$HOME/\~}${T_RESET})"
         fi
@@ -534,6 +549,7 @@ get_detailed_ssh_hosts_menu_options() {
 #   if [[ $? -eq 0 ]]; then ...
 select_ssh_host() {
     local prompt="$1"
+    local show_key_info="${2:-true}"
     mapfile -t hosts < <(get_ssh_hosts)
     if [[ ${#hosts[@]} -eq 0 ]]; then
         printInfoMsg "No hosts found in your SSH config file."
@@ -541,11 +557,11 @@ select_ssh_host() {
     fi
 
     local -a menu_options
-    get_detailed_ssh_hosts_menu_options menu_options
+    get_detailed_ssh_hosts_menu_options menu_options "$show_key_info"
 
     local selected_index
     local header
-    header=$(printf "  %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "DETAILS (user@hostname:port)")
+    header=$(printf "  %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "user@hostname:port")
     selected_index=$(interactive_single_select_menu "$prompt" "$header" "${menu_options[@]}")
     if [[ $? -ne 0 ]]; then
         printInfoMsg "Operation cancelled."
@@ -1446,10 +1462,16 @@ export_ssh_hosts() {
         return
     fi
 
-    # The menu will show the actual host aliases for selection.
+    # Get the detailed menu options to show more info to the user.
+    local -a menu_options
+    get_detailed_ssh_hosts_menu_options menu_options
+
     # The "All" option is a feature of interactive_multi_select_menu.
     local menu_output
-    menu_output=$(interactive_multi_select_menu "Select hosts to export (space to toggle, enter to confirm):" "All" "${hosts[@]}")
+    local header
+    # The 5 spaces are to align the header with the menu items, which are prefixed by '❯ [ ] '.
+    header=$(printf "     %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "user@hostname:port")
+    menu_output=$(interactive_multi_select_menu "Select hosts to export (space to toggle, enter to confirm):" "$header" "All" "${menu_options[@]}")
     if [[ $? -ne 0 ]]; then
         printInfoMsg "Export cancelled."
         return
@@ -1689,7 +1711,7 @@ _create_port_forward() {
         # The command already has -f to background itself.
         if ${cmd_string}; then
             printOkMsg "SSH port forward established successfully."
-            printInfoMsg "You can view it with 'List active port forwards' or find the process with 'pgrep -f \"${cmd_string}\"' and kill it when done."
+            printInfoMsg "You can manage this forward using the 'List' and 'Stop' options in the 'Port Forwarding' menu."
         else
             printErrMsg "Failed to establish SSH port forward."
         fi
@@ -1703,7 +1725,7 @@ setup_local_port_forward() {
     printBanner "Setup Local Port Forward (ssh -L)"
 
     local selected_host
-    selected_host=$(select_ssh_host "Select a host for the port forward:")
+    selected_host=$(select_ssh_host "Select a host for the port forward:" "false")
     [[ $? -ne 0 ]] && return
 
     local local_port remote_host remote_port
@@ -1723,7 +1745,7 @@ setup_remote_port_forward() {
     printBanner "Setup Remote Port Forward (ssh -R)"
 
     local selected_host
-    selected_host=$(select_ssh_host "Select a host to open a port on:")
+    selected_host=$(select_ssh_host "Select a host to open a port on:" "false")
     [[ $? -ne 0 ]] && return
 
     local local_port remote_host remote_port
@@ -1739,6 +1761,28 @@ setup_remote_port_forward() {
     _create_port_forward "$cmd_string" "$explanation" "$notes"
 }
 
+# (Private) Formats a line for displaying port forward information with colors.
+# Usage: _format_port_forward_line <pid> <type> <spec> <host>
+_format_port_forward_line() {
+    local pid="$1"
+    local type="$2"
+    local spec="$3"
+    local host="$4"
+
+    local type_color=""
+    if [[ "$type" == "Local" ]]; then
+        type_color="$C_L_CYAN"
+    elif [[ "$type" == "Remote" ]]; then
+        type_color="$C_L_YELLOW"
+    fi
+
+    # PID is default, Type is colored, Spec is white, Host is cyan.
+    printf "%-10s ${type_color}%-8s ${C_L_WHITE}%-30s ${C_L_CYAN}%s" \
+        "$pid" \
+        "$type" \
+        "$spec" \
+        "$host"
+}
 # (Private) Finds active port forwards and populates arrays with their details.
 # Usage: _get_active_port_forwards pids_array types_array specs_array hosts_array
 # Returns 0 if forwards are found, 1 otherwise.
@@ -1800,10 +1844,11 @@ list_active_port_forwards() {
     printMsg "  ${C_WHITE}${header}${T_RESET}"
 
     for i in "${!pids[@]}"; do
-        local formatted_string
-        formatted_string=$(printf "%-10s %-8s %-30s %s" "${pids[i]}" "${types[i]}" "${specs[i]}" "${hosts[i]}")
-        printMsg "  $formatted_string"
+        printMsg "  $(_format_port_forward_line "${pids[i]}" "${types[i]}" "${specs[i]}" "${hosts[i]}")${T_RESET}"
     done
+
+    # empty line for spacing
+    printMsg ""
 }
 
 # Interactively stops an active SSH port forward.
@@ -1818,9 +1863,7 @@ stop_port_forward() {
 
     local -a menu_options
     for i in "${!pids[@]}"; do
-        local formatted_string
-        formatted_string=$(printf "%-10s %-8s %-30s %s" "${pids[i]}" "${types[i]}" "${specs[i]}" "${hosts[i]}")
-        menu_options+=("$formatted_string")
+        menu_options+=("$(_format_port_forward_line "${pids[i]}" "${types[i]}" "${specs[i]}" "${hosts[i]}")")
     done
 
     local header
