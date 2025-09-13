@@ -2712,7 +2712,7 @@ interactive_server_management_view() {
 --- Key Management View Helpers ---
 
 _key_view_draw_header() {
-    local header; header=$(printf "   %-25s %-10s %-6s %s" "KEY FILENAME" "TYPE" "BITS" "COMMENT")
+    local header; header=$(printf " %-25s %-10s %-6s %s" "KEY FILENAME" "TYPE" "BITS" "COMMENT")
     printMsg "  ${C_WHITE}${header}${T_RESET}"
 }
 
