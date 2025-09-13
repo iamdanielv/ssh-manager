@@ -1856,6 +1856,8 @@ list_active_port_forwards() {
 
 # Lists all configured SSH hosts with details.
 list_all_hosts() {
+    printBanner "List All Configured Hosts"
+
     local -a menu_options
     # Get detailed host list, including key info.
     get_detailed_ssh_hosts_menu_options menu_options "true"
@@ -1874,6 +1876,9 @@ list_all_hosts() {
         # The menu options are already formatted with colors.
         printMsg "${option}"
     done
+
+    # add space
+    printMsg ""
 }
 
 # Interactively stops an active SSH port forward.
@@ -2021,6 +2026,7 @@ _run_submenu() {
 server_menu() {
     local -a menu_definition=(
         "Connect to a server"                "SPECIAL_CONNECT"
+        "List configured servers"            "list_all_hosts"
         "Test connection to a single server" "test_ssh_connection"
         "Test connection to ALL servers"     "test_all_ssh_connections"
         "Add a new server"                   "add_ssh_host"
