@@ -32,9 +32,10 @@ The script is organized into three main interactive views and an advanced tools 
 
 ### 🔌 Port Forwarding
 
-- **Live View**: See all active `ssh` port forwards (local and remote) started by the script.
-- **Add**: Set up new local (`-L`) or remote (`-R`) port forwards through an interactive prompt.
-- **Manage**: `stop` or `clone` existing port forwards.
+- **Saved Forwards**: Save, manage, and activate port forward configurations. All saved forwards are stored in `~/.ssh/port_forwards.conf`.
+- **Live Status**: View which of your saved forwards are currently `[ACTIVE]` or `[INACTIVE]`.
+- **Manage**: `add`, `edit`, `delete`, and `clone` saved forward configurations.
+- **Activate/Deactivate**: Easily start and stop forwards with a single keypress.
 
 ### 🛠️ Advanced Tools
 

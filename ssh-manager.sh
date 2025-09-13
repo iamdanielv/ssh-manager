@@ -485,6 +485,7 @@ wait_for_pids_with_spinner() {
 # --- Constants ---
 SSH_DIR="${SSH_DIR:-${HOME}/.ssh}"
 SSH_CONFIG_PATH="${SSH_CONFIG_PATH:-${SSH_DIR}/config}"
+PORT_FORWARDS_CONFIG_PATH="${PORT_FORWARDS_CONFIG_PATH:-${SSH_DIR}/port_forwards.conf}"
 
 # --- Script Functions ---
 
@@ -2041,106 +2042,236 @@ test_all_ssh_connections() {
     fi
 }
 
-# (Private) Generic worker for creating or cloning port forwards.
-# Consolidates the logic from setup_local/remote_port_forward and clone_port_forward.
-# Usage: _create_or_clone_port_forward <mode> <type> <host> [spec_to_clone]
-#   mode: 'create' or 'clone'
-#   type: 'Local' or 'Remote'
-#   host: The SSH host alias
-#   spec_to_clone: The spec string (e.g., "8080:localhost:80") for cloning
-_create_or_clone_port_forward() {
-    local mode="$1" type="$2" host="$3" spec_to_clone="${4:-}"
+# (Private) Reads saved port forwards from the config file.
+# Populates arrays with their details.
+# Usage: _get_saved_port_forwards types_array specs_array hosts_array descs_array
+_get_saved_port_forwards() {
+    local -n out_types="$1" out_specs="$2" out_hosts="$3" out_descs="$4"
+    out_types=() out_specs=() out_hosts=() out_descs=()
+    if [[ ! -f "$PORT_FORWARDS_CONFIG_PATH" ]]; then return 1; fi
+    while IFS='|' read -r type spec host desc || [[ -n "$type" ]]; do
+        [[ -z "$type" || "$type" =~ ^# ]] && continue
+        out_types+=("$type"); out_specs+=("$spec"); out_hosts+=("$host"); out_descs+=("$desc")
+    done < "$PORT_FORWARDS_CONFIG_PATH"
+}
 
-    local flag p1_prompt p1_default h_prompt h_default p2_prompt p2_default explanation_tpl notes=""
-    if [[ "$type" == "Local" ]]; then
-        flag="-L"
-        p1_prompt="Enter the LOCAL port to listen on"
-        h_prompt="Enter the REMOTE host to connect to (from ${host})"
-        p2_prompt="Enter the REMOTE port to connect to"
-        explanation_tpl="This will forward local port %s to %s on the remote network."
-        p1_default="8080"; h_default="localhost"; p2_default="80"
-    else # Remote
-        flag="-R"
-        p1_prompt="Enter the REMOTE port to listen on (on ${host})"
-        h_prompt="Enter the LOCAL host to connect to"
-        p2_prompt="Enter the LOCAL port to connect to"
-        explanation_tpl="This will forward remote port %s on ${host} to %s on your local machine."
-        notes="Ensure 'GatewayPorts' is enabled in the server's sshd_config for remote forwards to be accessible externally."
-        p1_default="8080"; h_default="localhost"; p2_default="80"
+# (Private) Writes an array of port forward configurations to the file, overwriting it.
+# Usage: _save_all_port_forwards types_array specs_array hosts_array descs_array
+_save_all_port_forwards() {
+    # Use ref_ prefix for namerefs to avoid circular reference if caller uses same variable names.
+    local -n ref_types="$1" ref_specs="$2" ref_hosts="$3" ref_descs="$4"
+    local temp_file; temp_file=$(mktemp)
+    for i in "${!ref_types[@]}"; do echo "${ref_types[i]}|${ref_specs[i]}|${ref_hosts[i]}|${ref_descs[i]}" >> "$temp_file"; done
+    mv "$temp_file" "$PORT_FORWARDS_CONFIG_PATH"
+}
+
+# (Private) Prompts user for all details of a port forward. Used by add and edit.
+# Usage: _prompt_for_port_forward_details type_var spec_var host_var desc_var [defaults...]
+_prompt_for_port_forward_details() {
+    local -n out_type="$1" out_spec="$2" out_host="$3" out_desc="$4"
+    local d_type="${5:-}" d_spec_p1="${6:-}" d_spec_h="${7:-}" d_spec_p2="${8:-}" d_host="${9:-}" d_desc="${10:-}"
+    local -a type_options=("Local (-L)" "Remote (-R)"); local type_idx; type_idx=$(interactive_single_select_menu "Select forward type:" "" "${type_options[@]}")
+    [[ $? -ne 0 ]] && { printInfoMsg "Cancelled."; return 1; }
+    if [[ "$type_idx" -eq 0 ]]; then out_type="Local"; else out_type="Remote"; fi
+    out_host=$(select_ssh_host "Select a host for the port forward:" "false"); [[ $? -ne 0 ]] && return 1
+    local p1_val p1_prompt h_val h_prompt p2_val p2_prompt
+    if [[ "$out_type" == "Local" ]]; then
+        p1_prompt="Enter the LOCAL port to listen on"; h_prompt="Enter the REMOTE host to connect to (from ${out_host})"; p2_prompt="Enter the REMOTE port to connect to"
+    else
+        p1_prompt="Enter the REMOTE port to listen on (on ${out_host})"; h_prompt="Enter the LOCAL host to connect to"; p2_prompt="Enter the LOCAL port to connect to"
+    fi
+    prompt_for_input "$p1_prompt" p1_val "${d_spec_p1:-8080}" || return 1
+    prompt_for_input "$h_prompt" h_val "${d_spec_h:-localhost}" || return 1
+    prompt_for_input "$p2_prompt" p2_val "${d_spec_p2:-80}" || return 1
+    out_spec="${p1_val}:${h_val}:${p2_val}"
+    prompt_for_input "Enter a short description for this forward" out_desc "${d_desc:-${out_spec} on ${out_host}}" || return 1
+    return 0
+}
+
+# Adds a new port forward configuration to the saved list.
+add_saved_port_forward() {
+    printBanner "Add New Saved Port Forward"
+    local -a types specs hosts descs; _get_saved_port_forwards types specs hosts descs
+    local new_type new_spec new_host new_desc; if ! _prompt_for_port_forward_details new_type new_spec new_host new_desc; then return; fi
+    types+=("$new_type"); specs+=("$new_spec"); hosts+=("$new_host"); descs+=("$new_desc")
+    _save_all_port_forwards types specs hosts descs
+    printOkMsg "Saved new port forward: ${new_desc}"
+}
+
+# (Private) Draws the current details of the port forward being edited.
+_draw_edit_port_forward_details() {
+    local type="$1" p1="$2" h="$3" p2="$4" host="$5" desc="$6"
+
+    local p1_label="Local Port" h_label="Remote Host" p2_label="Remote Port"
+    if [[ "$type" == "Remote" ]]; then
+        p1_label="Remote Port" h_label="Local Host" p2_label="Local Port"
     fi
 
-    local banner_title="Setup ${type} Port Forward (ssh ${flag})"
-    if [[ "$mode" == "clone" ]]; then
-        banner_title="Clone Port Forward"
-        local old_p1="${spec_to_clone%%:*}"
-        local remote_part="${spec_to_clone#*:}"
-        p1_default=$((old_p1 + 1))
-        h_default="${remote_part%:*}"
-        p2_default="${remote_part##*:}"
-    fi
+    printMsg "$(printf "  %-15s: %s" "Type" "${C_L_CYAN}${type}${T_RESET}")"
+    printMsg "$(printf "  %-15s: %s" "SSH Host" "${C_L_CYAN}${host}${T_RESET}")"
+    printMsg "$(printf "  %-15s: %s" "${p1_label}" "${C_L_CYAN}${p1}${T_RESET}")"
+    printMsg "$(printf "  %-15s: %s" "${h_label}" "${C_L_CYAN}${h}${T_RESET}")"
+    printMsg "$(printf "  %-15s: %s" "${p2_label}" "${C_L_CYAN}${p2}${T_RESET}")"
+    printMsg "$(printf "  %-15s: %s" "Description" "${C_L_CYAN}${desc}${T_RESET}")"
+    printMsg "${C_GRAY}${DIV}${T_RESET}"
+}
 
-    local p1_val="$p1_default" h_val="$h_default" p2_val="$p2_default"
+# Edits a saved port forward configuration.
+edit_saved_port_forward() {
+    local idx_to_edit="$1"
+    local -a all_types all_specs all_hosts all_descs; _get_saved_port_forwards all_types all_specs all_hosts all_descs
+    local original_type="${all_types[$idx_to_edit]}" original_spec="${all_specs[$idx_to_edit]}" original_host="${all_hosts[$idx_to_edit]}" original_desc="${all_descs[$idx_to_edit]}"
+    local new_type="$original_type" new_host="$original_host" new_desc="$original_desc"
+    local p1="${original_spec%%:*}"
+    local remote_part="${original_spec#*:}"
+    local h="${remote_part%:*}"
+    local p2="${remote_part##*:}"
+
     while true; do
-        clear
-        printBanner "$banner_title"
-        if [[ "$mode" == "clone" ]]; then
-            printInfoMsg "Cloning forward: ${C_L_CYAN}${spec_to_clone}${T_RESET} (${type}) on host ${C_L_CYAN}${host}${T_RESET}"
-        else
-            printInfoMsg "Selected host: ${C_L_CYAN}${host}${T_RESET}"
+        clear; printBanner "Edit Saved Port Forward - ${C_L_CYAN}${original_desc}${C_BLUE}"
+        _draw_edit_port_forward_details "$new_type" "$p1" "$h" "$p2" "$new_host" "$new_desc"
+        local p1_label="Local Port" h_label="Remote Host" p2_label="Remote Port"
+        if [[ "$new_type" == "Remote" ]]; then
+            p1_label="Remote Port"; h_label="Local Host"; p2_label="Local Port"
         fi
+        local -a menu_options=( "Edit Type (Local/Remote)" "Edit SSH Host" "Edit ${p1_label}" "Edit ${h_label}" "Edit ${p2_label}" "Edit Description" "Save and Exit" "Cancel" )
+        local selected_index; selected_index=$(interactive_single_select_menu "Select a field to edit:" "" "${menu_options[@]}")
+        if [[ $? -ne 0 ]]; then printInfoMsg "Edit cancelled. No changes were saved."; return; fi
+        local selected_option="${menu_options[$selected_index]}"
+        case "$selected_option" in
+            "Edit Type (Local/Remote)")
+                local -a type_options=("Local (-L)" "Remote (-R)"); local type_idx
+                type_idx=$(interactive_single_select_menu "Select forward type:" "" "${type_options[@]}")
+                if [[ $? -eq 0 ]]; then if [[ "$type_idx" -eq 0 ]]; then new_type="Local"; else new_type="Remote"; fi; fi ;;
+            "Edit SSH Host")
+                local selected_host; selected_host=$(select_ssh_host "Select a new SSH host:" "false")
+                if [[ $? -eq 0 ]]; then new_host="$selected_host"; fi ;;
+            "Edit ${p1_label}")
+                prompt_for_input "Enter the ${new_type} port to listen on" p1 "$p1" ;;
+            "Edit ${h_label}")
+                local h_prompt="Enter the REMOTE host to connect to (from ${new_host})"
+                if [[ "$new_type" == "Remote" ]]; then h_prompt="Enter the LOCAL host to connect to"; fi
+                prompt_for_input "$h_prompt" h "$h" ;;
+            "Edit ${p2_label}")
+                local p2_prompt="Enter the REMOTE port to connect to"
+                if [[ "$new_type" == "Remote" ]]; then p2_prompt="Enter the LOCAL port to connect to"; fi
+                prompt_for_input "$p2_prompt" p2 "$p2" ;;
+            "Edit Description")
+                prompt_for_input "Enter a short description" new_desc "$new_desc" ;;
+            "Save and Exit") break ;;
+            "Cancel") printInfoMsg "Edit cancelled. No changes were saved."; return ;;
+        esac
+    done
 
-        prompt_for_input "$p1_prompt" p1_val "$p1_val" || return
-        prompt_for_input "$h_prompt" h_val "$h_val" || return
-        prompt_for_input "$p2_prompt" p2_val "$p2_val" || return
+    local new_spec="${p1}:${h}:${p2}"
+    if [[ "$new_type" == "$original_type" && "$new_spec" == "$original_spec" && "$new_host" == "$original_host" && "$new_desc" == "$original_desc" ]]; then
+        printInfoMsg "No changes detected. Configuration remains unchanged."
+        return
+    fi
 
-        local new_spec="${p1_val}:${h_val}:${p2_val}"
-        local -a cmd_array=("ssh" "-o" "ExitOnForwardFailure=yes" "-N" "-f" "${flag}" "${new_spec}" "${host}")
-        local explanation; printf -v explanation "$explanation_tpl" "${C_L_CYAN}${p1_val}${T_RESET}" "${C_L_CYAN}${h_val}:${p2_val}${T_RESET}"
+    all_types[$idx_to_edit]="$new_type"
+    all_specs[$idx_to_edit]="$new_spec"
+    all_hosts[$idx_to_edit]="$new_host"
+    all_descs[$idx_to_edit]="$new_desc"
+    _save_all_port_forwards all_types all_specs all_hosts all_descs
+    printOkMsg "Saved port forward has been updated."
+}
 
-        clear
-        printBanner "$banner_title"
-        printInfoMsg "$explanation"
-        if [[ -n "$notes" ]]; then printWarnMsg "$notes"; fi
-        printMsg "\n${T_ULINE}Command to be run in the background:${T_RESET}"
-        printMsg "  ${C_L_BLUE}${cmd_array[*]}${T_RESET}"
-        printMsg "\n${C_GRAY}The -N flag prevents executing a remote command, and -f runs it in the background.${T_RESET}"
-
-        if ! prompt_yes_no "Proceed with creating the port forward?" "y"; then printInfoMsg "Operation cancelled."; return; fi
-
-        if run_with_spinner "Establishing port forward..." "${cmd_array[@]}"; then
-            printInfoMsg "You can manage this forward using the 'Port Forwarding' menu."; return 0
-        else
-            if ! prompt_yes_no "Would you like to modify the settings and try again?" "y"; then
-                printInfoMsg "Operation cancelled."; return 1
-            fi
+# Deletes a saved port forward configuration.
+delete_saved_port_forward() {
+    local idx_to_delete="$1" type="$2" spec="$3" host="$4"
+    if ! prompt_yes_no "Permanently delete saved forward '${spec}' on '${host}'?" "n"; then printInfoMsg "Deletion cancelled."; return; fi
+    local -a all_types all_specs all_hosts all_descs; _get_saved_port_forwards all_types all_specs all_hosts all_descs
+    local -a new_types new_specs new_hosts new_descs
+    for i in "${!all_types[@]}"; do
+        if [[ "$i" -ne "$idx_to_delete" ]]; then
+            new_types+=("${all_types[i]}"); new_specs+=("${all_specs[i]}"); new_hosts+=("${all_hosts[i]}"); new_descs+=("${all_descs[i]}")
         fi
     done
+    _save_all_port_forwards new_types new_specs new_hosts new_descs
+    printOkMsg "Deleted saved port forward."
 }
 
-# Sets up a local port forward (ssh -L).
-setup_local_port_forward() {
-    local selected_host
-    selected_host=$(select_ssh_host "Select a host for the port forward:" "false")
-    [[ $? -ne 0 ]] && return
+# Clones a saved port forward configuration.
+clone_saved_port_forward() {
+    local type_to_clone="$1" spec_to_clone="$2" host_to_clone="$3" desc_to_clone="$4"
 
-    _create_or_clone_port_forward "create" "Local" "$selected_host"
+    # Initialize new values based on the item being cloned
+    local new_type="$type_to_clone"
+    local new_host="$host_to_clone"
+    local new_desc="Clone of ${desc_to_clone}"
+    local p1="${spec_to_clone%%:*}"
+    local remote_part="${spec_to_clone#*:}"
+    local h="${remote_part%:*}"
+    local p2="${remote_part##*:}"
+    p1=$((p1 + 1)) # Suggest a new port by default
+
+    while true; do
+        clear; printBanner "Clone Saved Port Forward - from ${C_L_CYAN}${desc_to_clone}${C_BLUE}"
+        _draw_edit_port_forward_details "$new_type" "$p1" "$h" "$p2" "$new_host" "$new_desc"
+        local p1_label="Local Port" h_label="Remote Host" p2_label="Remote Port"
+        if [[ "$new_type" == "Remote" ]]; then
+            p1_label="Remote Port"; h_label="Local Host"; p2_label="Local Port"
+        fi
+        local -a menu_options=( "Edit Type (Local/Remote)" "Edit SSH Host" "Edit ${p1_label}" "Edit ${h_label}" "Edit ${p2_label}" "Edit Description" "Save and Exit" "Cancel" )
+        local selected_index; selected_index=$(interactive_single_select_menu "Select a field to edit:" "" "${menu_options[@]}")
+        if [[ $? -ne 0 ]]; then printInfoMsg "Clone cancelled. No changes were saved."; return; fi
+        local selected_option="${menu_options[$selected_index]}"
+        case "$selected_option" in
+            "Edit Type (Local/Remote)")
+                local -a type_options=("Local (-L)" "Remote (-R)"); local type_idx
+                type_idx=$(interactive_single_select_menu "Select forward type:" "" "${type_options[@]}")
+                if [[ $? -eq 0 ]]; then if [[ "$type_idx" -eq 0 ]]; then new_type="Local"; else new_type="Remote"; fi; fi ;;
+            "Edit SSH Host")
+                local selected_host; selected_host=$(select_ssh_host "Select a new SSH host:" "false")
+                if [[ $? -eq 0 ]]; then new_host="$selected_host"; fi ;;
+            "Edit ${p1_label}")
+                prompt_for_input "Enter the ${new_type} port to listen on" p1 "$p1" ;;
+            "Edit ${h_label}")
+                local h_prompt="Enter the REMOTE host to connect to (from ${new_host})"
+                if [[ "$new_type" == "Remote" ]]; then h_prompt="Enter the LOCAL host to connect to"; fi
+                prompt_for_input "$h_prompt" h "$h" ;;
+            "Edit ${p2_label}")
+                local p2_prompt="Enter the REMOTE port to connect to"
+                if [[ "$new_type" == "Remote" ]]; then p2_prompt="Enter the LOCAL port to connect to"; fi
+                prompt_for_input "$p2_prompt" p2 "$p2" ;;
+            "Edit Description")
+                prompt_for_input "Enter a short description" new_desc "$new_desc" ;;
+            "Save and Exit") break ;;
+            "Cancel") printInfoMsg "Clone cancelled. No changes were saved."; return ;;
+        esac
+    done
+
+    local new_spec="${p1}:${h}:${p2}"
+    local -a all_types all_specs all_hosts all_descs; _get_saved_port_forwards all_types all_specs all_hosts all_descs
+    all_types+=("$new_type"); all_specs+=("$new_spec"); all_hosts+=("$new_host"); all_descs+=("$new_desc")
+    _save_all_port_forwards all_types all_specs all_hosts all_descs
+    printOkMsg "Saved cloned port forward."
 }
 
-# Sets up a remote port forward (ssh -R).
-setup_remote_port_forward() {
-    local selected_host
-    selected_host=$(select_ssh_host "Select a host to open a port on:" "false")
-    [[ $? -ne 0 ]] && return
-
-    _create_or_clone_port_forward "create" "Remote" "$selected_host"
+# Activates a saved port forward by running ssh in the background.
+activate_port_forward() {
+    local type="$1" spec="$2" host="$3"
+    local flag; if [[ "$type" == "Local" ]]; then flag="-L"; else flag="-R"; fi
+    local -a cmd_array=("ssh" "-o" "ExitOnForwardFailure=yes" "-N" "-f" "${flag}" "${spec}" "${host}")
+    printInfoMsg "Activating forward: ${type} ${spec} on ${host}"
+    printMsg "  ${C_L_BLUE}${cmd_array[*]}${T_RESET}"
+    if run_with_spinner "Establishing port forward..." "${cmd_array[@]}"; then
+        printOkMsg "Port forward activated in the background."
+    else
+        printErrMsg "Failed to activate port forward."
+    fi
 }
 
-# Clones an existing port forward, prompting for a new port.
-clone_port_forward() {
-    local type="$1"
-    local spec="$2"
-    local host="$3"
-    _create_or_clone_port_forward "clone" "$type" "$host" "$spec"
+# Deactivates a port forward by killing its process.
+deactivate_port_forward() {
+    local pid="$1" spec="$2" host="$3"
+    if ! prompt_yes_no "Stop port forward ${spec} on ${host} (PID: ${pid})?" "y"; then printInfoMsg "Operation cancelled."; return; fi
+    if run_with_spinner "Stopping port forward (PID: ${pid})..." kill "$pid"; then
+        printOkMsg "Port forward stopped."
+    else
+        printErrMsg "Failed to stop port forward process."
+    fi
 }
 
 # (Private) Formats a line for displaying port forward information with colors.
@@ -2265,32 +2396,41 @@ list_all_hosts() {
 
 # --- Port Forwarding View Helpers ---
 
+# (Private) Formats a line for displaying a saved port forward.
+# Usage: _format_saved_port_forward_line <status> <pid> <type> <spec> <host> <desc>
+_format_saved_port_forward_line() {
+    local status="$1" pid="$2" type="$3" spec="$4" host="$5" desc="$6"
+    local type_color=""; if [[ "$type" == "Local" ]]; then type_color="$C_L_CYAN"; elif [[ "$type" == "Remote" ]]; then type_color="$C_L_YELLOW"; fi
+    local status_icon; if [[ "$status" == "active" ]]; then status_icon="${C_L_GREEN}[ACTIVE]  "; else status_icon="${C_GRAY}[INACTIVE]"; fi
+    printf "%-10s %-8s ${type_color}%-8s ${C_L_WHITE}%-25s ${C_L_CYAN}%-20s ${C_GRAY}%s${T_RESET}" \
+        "$status_icon" "${pid}" "$type" "$spec" "$host" "$desc"
+}
+
 _port_forward_view_draw_header() {
-    local header; header=$(printf "   %-10s %-8s %-30s %s" "PID" "TYPE" "FORWARD" "HOST")
-    printMsg "  ${C_WHITE}${header}${T_RESET}"
+    local header; header=$(printf "   %-10s %-8s %-8s %-25s %-20s %s" "STATUS" "PID" "TYPE" "FORWARD" "HOST" "DESCRIPTION")
+    printMsg "${C_WHITE}${header}${T_RESET}"
 }
 
 _port_forward_view_draw_footer() {
     printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC${T_RESET} Back"
-    printMsg "  ${T_BOLD}Port Actions:${T_RESET} Add (${C_L_CYAN}L${T_RESET})ocal | Add (${C_L_CYAN}R${T_RESET})emote | (${C_L_RED}S${T_RESET})top | (${C_L_CYAN}C${T_RESET})lone"
+    printMsg "  ${T_BOLD}Actions:${T_RESET}      ${C_L_GREEN}(A)dd${T_RESET} | (${C_L_RED}D${T_RESET})elete | (${C_L_CYAN}E${T_RESET})dit | (${C_L_CYAN}C${T_RESET})lone | ${C_L_GREEN}ENTER${T_RESET} Start/Stop"
 }
 
 _port_forward_view_refresh() {
-    local -n out_menu_options="$1"
-    local -n out_data_payloads="$2"
-    out_menu_options=()
-    out_data_payloads=()
-
-    local -a pids types specs hosts
-    if ! _get_active_port_forwards pids types specs hosts; then
-        return # No forwards found
-    fi
-
-    for i in "${!pids[@]}"; do
-        # Formatted string for display
-        out_menu_options+=("$(_format_port_forward_line "${pids[i]}" "${types[i]}" "${specs[i]}" "${hosts[i]}")")
-        # Pipe-delimited string for the data payload
-        out_data_payloads+=("${pids[i]}|${types[i]}|${specs[i]}|${hosts[i]}")
+    local -n out_menu_options="$1" out_data_payloads="$2"; out_menu_options=(); out_data_payloads=()
+    local -a saved_types saved_specs saved_hosts saved_descs; _get_saved_port_forwards saved_types saved_specs saved_hosts saved_descs
+    local -a active_pids active_types active_specs active_hosts; _get_active_port_forwards active_pids active_types active_specs active_hosts
+    local -A active_map
+    for i in "${!active_pids[@]}"; do
+        local key="${active_types[i]}|${active_specs[i]}|${active_hosts[i]}"; active_map["$key"]="${active_pids[i]}"
+    done
+    for i in "${!saved_types[@]}"; do
+        local type="${saved_types[i]}" spec="${saved_specs[i]}" host="${saved_hosts[i]}" desc="${saved_descs[i]}"
+        local key="${type}|${spec}|${host}"
+        local status status_pid
+        if [[ -n "${active_map[$key]}" ]]; then status="active"; status_pid="${active_map[$key]}"; else status="inactive"; status_pid=""; fi
+        out_menu_options+=("$(_format_saved_port_forward_line "$status" "$status_pid" "$type" "$spec" "$host" "$desc")")
+        out_data_payloads+=("$i|$type|$spec|$host|$desc|$status_pid")
     done
 }
 
@@ -2299,30 +2439,18 @@ _port_forward_view_key_handler() {
     local selected_payload="$2"
     # local selected_index="$3" # Unused
     local -n out_result="$4"
-
     out_result=0 # Default to no-op
-
-    # Parse the payload if an item is selected
-    local selected_pid="" selected_type="" selected_spec="" selected_host=""
-    if [[ -n "$selected_payload" ]]; then
-        IFS='|' read -r selected_pid selected_type selected_spec selected_host <<< "$selected_payload"
-    fi
-
+    local idx type spec host desc pid
+    if [[ -n "$selected_payload" ]]; then IFS='|' read -r idx type spec host desc pid <<< "$selected_payload"; fi
     case "$key" in
-        'l'|'L') run_menu_action "setup_local_port_forward"; out_result=1 ;;
-        'r'|'R') run_menu_action "setup_remote_port_forward"; out_result=1 ;;
-        's'|'S')
-            if [[ -n "$selected_pid" ]]; then
-                local question="Stop port forward ${C_L_CYAN}${selected_spec}${T_RESET} on ${C_L_CYAN}${selected_host}${T_RESET} (PID: ${selected_pid})?"
-                if prompt_yes_no "$question" "y"; then
-                    run_with_spinner "Stopping port forward (PID: ${selected_pid})" kill "$selected_pid"
-                    out_result=1 # Refresh list
-                fi
-            fi ;;
-        'c'|'C')
-            if [[ -n "$selected_pid" ]]; then
-                run_menu_action "clone_port_forward" "$selected_type" "$selected_spec" "$selected_host"
-                out_result=1 # Refresh list
+        'a'|'A') run_menu_action "add_saved_port_forward"; out_result=1 ;;
+        'e'|'E') if [[ -n "$selected_payload" ]]; then run_menu_action "edit_saved_port_forward" "$idx"; out_result=1; fi ;;
+        'd'|'D') if [[ -n "$selected_payload" ]]; then run_menu_action "delete_saved_port_forward" "$idx" "$type" "$spec" "$host"; out_result=1; fi ;;
+        'c'|'C') if [[ -n "$selected_payload" ]]; then run_menu_action "clone_saved_port_forward" "$type" "$spec" "$host" "$desc"; out_result=1; fi ;;
+        "$KEY_ENTER")
+            if [[ -n "$selected_payload" ]]; then
+                if [[ -n "$pid" ]]; then run_menu_action "deactivate_port_forward" "$pid" "$spec" "$host"; else run_menu_action "activate_port_forward" "$type" "$spec" "$host"; fi
+                out_result=1
             fi ;;
         "$KEY_ESC"|"q"|"Q") out_result=2 ;; # Exit view
     esac
@@ -2652,6 +2780,7 @@ _setup_environment() {
     prereq_checks "$@"
     mkdir -p "$SSH_DIR"; chmod 700 "$SSH_DIR"
     touch "$SSH_CONFIG_PATH"; chmod 600 "$SSH_CONFIG_PATH"
+    touch "$PORT_FORWARDS_CONFIG_PATH"; chmod 600 "$PORT_FORWARDS_CONFIG_PATH"
 }
 
 # Main application loop.
