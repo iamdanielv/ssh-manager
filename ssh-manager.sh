@@ -464,6 +464,28 @@ get_ssh_config_value() {
     '
 }
 
+# (Private) Gets a config value ONLY if it's explicitly set in the host block.
+# This avoids picking up default values that `ssh -G` provides.
+# Returns an empty string if the key is not explicitly set in the block.
+# Usage: _get_explicit_ssh_config_value <host_alias> <config_key>
+_get_explicit_ssh_config_value() {
+    local host_alias="$1"
+    local key_lower
+    key_lower=$(echo "$2" | tr '[:upper:]' '[:lower:]')
+
+    local host_block
+    host_block=$(_get_host_block_from_config "$host_alias" "$SSH_CONFIG_PATH")
+
+    if [[ -n "$host_block" ]]; then
+        # Parse the block for the specific key, ignoring case for the key itself.
+        echo "$host_block" | awk -v key="$key_lower" '
+            tolower($1) == key {
+                val = ""; for (i = 2; i <= NF; i++) { val = (val ? val " " : "") $i }; print val; exit
+            }
+        '
+    fi
+}
+
 # (Private) Gets all relevant config values for a given host in one go.
 # Returns a string of `eval`-safe variable assignments.
 # Usage:
@@ -478,7 +500,7 @@ _get_all_ssh_config_values_as_string() {
         BEGIN {
             keys["hostname"] = "current_hostname"
             keys["user"] = "current_user"
-            keys["identityfile"] = "current_identityfile"
+            # identityfile is now handled separately to avoid ssh -G defaults
             keys["port"] = "current_port"
         }
         # If the first field is one of our target keys, process it.
@@ -516,8 +538,12 @@ get_detailed_ssh_hosts_menu_options() {
         # This is safe because the input is controlled (from ssh -G) and the awk script
         # only processes specific, known keys.
         local current_hostname current_user current_identityfile current_port
-        local details; details=$(_get_all_ssh_config_values_as_string "$host_alias")
-        eval "$details"
+        local details; details=$(_get_all_ssh_config_values_as_string "$host_alias") # Gets hostname, user, port
+        eval "$details" # Sets the variables
+
+        # Now, explicitly get the identity file to avoid using ssh -G defaults.
+        current_identityfile=$(_get_explicit_ssh_config_value "$host_alias" "IdentityFile")
+
         # Clean up identity file path for display
         local key_info=""
         if [[ "$show_key_info" == "true" && -n "$current_identityfile" ]]; then
@@ -564,7 +590,7 @@ select_ssh_host() {
 
     local selected_index
     local header
-    header=$(printf "  %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "user@hostname:port")
+    header=$(printf "  %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "user@hostname[:port]")
     selected_index=$(interactive_single_select_menu "$prompt" "$header" "${menu_options[@]}")
     if [[ $? -ne 0 ]]; then
         printInfoMsg "Operation cancelled."
@@ -758,7 +784,7 @@ _prompt_for_host_details() {
     local default_user="${6:-$USER}"
     local default_port="${7:-22}"
 
-    _prompt_for_unique_host_alias out_alias "Enter a short alias for the host (e.g., 'prod-server')" || return 1
+    _prompt_for_unique_host_alias out_alias "Enter a short alias for the host (e.g., 'server')" || return 1
     prompt_for_input "Enter the HostName (IP address or FQDN)" out_hostname "$default_hostname" || return 1
     prompt_for_input "Enter the remote User" out_user "$default_user" || return 1
     prompt_for_input "Enter the Port" out_port "$default_port" || return 1
@@ -941,7 +967,7 @@ add_ssh_host() {
         default_hostname=$(get_ssh_config_value "$host_to_clone" "HostName")
         default_user=$(get_ssh_config_value "$host_to_clone" "User")
         default_port=$(get_ssh_config_value "$host_to_clone" "Port")
-        default_identity_file=$(get_ssh_config_value "$host_to_clone" "IdentityFile")
+        default_identity_file=$(_get_explicit_ssh_config_value "$host_to_clone" "IdentityFile")
     fi
 
     # --- Step 2: Get host details ---
@@ -1072,13 +1098,90 @@ _get_host_block_from_config() {
     _process_ssh_config_blocks "$host_to_find" "$config_file" "keep"
 }
 
+# (Private) Interactively prompts the user to select or create an IdentityFile when editing a host.
+# This provides a menu-driven alternative to manually typing a file path.
+# Usage: _prompt_for_identity_file_interactive <out_var> <current_path> <host_alias> <user> <hostname>
+# Returns 0 on success, 1 on cancellation.
+_prompt_for_identity_file_interactive() {
+    local -n out_identity_file="$1"
+    local current_identity_file="$2"
+    local host_alias="$3"
+    local user="$4"
+    local hostname="$5"
+
+    while true; do
+        local -a menu_options=()
+        local -a option_values=() # Parallel array to hold the real values
+
+        # Option: Keep current
+        if [[ -n "$current_identity_file" ]]; then
+            menu_options+=("Keep current: ${C_L_GREEN}${current_identity_file/#$HOME/\~}${T_RESET}")
+            option_values+=("$current_identity_file")
+        fi
+
+        # Option: Remove
+        menu_options+=("Remove IdentityFile entry")
+        option_values+=("__REMOVE__")
+
+        # Option: Generate new
+        menu_options+=("Generate a new dedicated key (ed25519)...")
+        option_values+=("__GENERATE__")
+
+        # Find existing private keys to offer as choices
+        local -a existing_keys=()
+        mapfile -t pub_keys < <(find "$SSH_DIR" -maxdepth 1 -type f -name "*.pub")
+        if [[ ${#pub_keys[@]} -gt 0 ]]; then
+            for pub_key in "${pub_keys[@]}"; do
+                local private_key="${pub_key%.pub}"
+                # Only add if it's not the currently selected key
+                if [[ "$private_key" != "$current_identity_file" ]]; then
+                    existing_keys+=("$private_key")
+                fi
+            done
+        fi
+
+        if [[ ${#existing_keys[@]} -gt 0 ]]; then
+            menu_options+=("--- Select an existing key ---")
+            option_values+=("__SEPARATOR__")
+            for key in "${existing_keys[@]}"; do
+                menu_options+=("  ${key/#$HOME/\~}")
+                option_values+=("$key")
+            done
+        fi
+
+        local selected_index
+        selected_index=$(interactive_single_select_menu "Select an IdentityFile option for '${host_alias}':" "" "${menu_options[@]}")
+        if [[ $? -ne 0 ]]; then return 1; fi # User cancelled
+
+        local selected_value="${option_values[$selected_index]}"
+
+        case "$selected_value" in
+            "__SEPARATOR__") continue ;; # Loop to redraw menu
+            "__REMOVE__") out_identity_file=""; return 0 ;;
+            "__GENERATE__")
+                local new_key_filename; local default_key_name="${host_alias}_id_ed25519"
+                prompt_for_input "Enter filename for new key (in ${SSH_DIR})" new_key_filename "$default_key_name" || continue
+                local new_key_path="${SSH_DIR}/${new_key_filename}"
+                if [[ -f "$new_key_path" ]] && ! prompt_yes_no "Key file '${new_key_path}' already exists. Overwrite?" "n"; then
+                    printInfoMsg "Key generation cancelled."; continue
+                fi
+                if run_with_spinner "Generating new ed25519 key..." ssh-keygen -t ed25519 -f "$new_key_path" -N "" -C "${user}@${hostname}"; then
+                    out_identity_file="$new_key_path"; return 0
+                else printErrMsg "Failed to generate key."; prompt_to_continue; continue; fi ;;
+            *) out_identity_file="$selected_value"; return 0 ;;
+        esac
+    done
+}
+
 # Edits an existing host in the SSH config.
 edit_ssh_host() {
     printBanner "Edit SSH Host"
 
-    local host_to_edit
-    host_to_edit=$(select_ssh_host "Select a host to edit:")
-    [[ $? -ne 0 ]] && return
+    local host_to_edit="$1"
+    if [[ -z "$host_to_edit" ]]; then
+        host_to_edit=$(select_ssh_host "Select a host to edit:")
+        [[ $? -ne 0 ]] && return
+    fi
 
     printInfoMsg "Editing configuration for: ${C_L_CYAN}${host_to_edit}${T_RESET}"
     printMsg "${C_L_GRAY}(Press Enter to keep the current value)${T_RESET}"
@@ -1086,14 +1189,22 @@ edit_ssh_host() {
     # Get current values to use as defaults in prompts, using the efficient helper.
     local current_hostname current_user current_port current_identityfile
     local details; details=$(_get_all_ssh_config_values_as_string "$host_to_edit")
-    eval "$details"
+    eval "$details" # Sets hostname, user, port
+
+    # Now, explicitly get the identity file to avoid using ssh -G defaults for the prompt.
+    current_identityfile=$(_get_explicit_ssh_config_value "$host_to_edit" "IdentityFile")
 
     # Prompt for new values
     local new_hostname new_user new_port new_identityfile
     prompt_for_input "HostName" new_hostname "$current_hostname" || return
     prompt_for_input "User" new_user "$current_user" || return
     prompt_for_input "Port" new_port "${current_port:-22}" || return
-    prompt_for_input "IdentityFile (optional, leave blank to remove)" new_identityfile "$current_identityfile" "true" || return
+
+    # Use the new interactive menu for IdentityFile selection
+    if ! _prompt_for_identity_file_interactive new_identityfile "$current_identityfile" "$host_to_edit" "$new_user" "$new_hostname"; then
+        printInfoMsg "Host edit cancelled during key selection."
+        return
+    fi
 
     # Check if any changes were actually made before rewriting the file.
     # This provides better feedback and avoids unnecessary file I/O.
@@ -1103,16 +1214,6 @@ edit_ssh_host() {
           "$new_identityfile" == "$current_identityfile" ]]; then
         printInfoMsg "No changes detected. Host configuration remains unchanged."
         return
-    fi
-
-    # Validate the IdentityFile path if one was provided.
-    if [[ -n "$new_identityfile" ]]; then
-        # Expand tilde (~) to the user's home directory for path validation.
-        local expanded_identityfile="${new_identityfile/#\~/$HOME}"
-        if [[ ! -f "$expanded_identityfile" ]]; then
-            printErrMsg "The specified IdentityFile does not exist: ${new_identityfile}"
-            return 1 # Return to the main menu
-        fi
     fi
 
     # Get the config content without the old host block
@@ -1143,9 +1244,11 @@ edit_ssh_host() {
 edit_ssh_host_in_editor() {
     printBanner "Edit Host Block in Editor"
 
-    local host_to_edit
-    host_to_edit=$(select_ssh_host "Select a host to edit:")
-    [[ $? -ne 0 ]] && return # select_ssh_host prints messages
+    local host_to_edit="$1"
+    if [[ -z "$host_to_edit" ]]; then
+        host_to_edit=$(select_ssh_host "Select a host to edit:")
+        [[ $? -ne 0 ]] && return # select_ssh_host prints messages
+    fi
 
     # Get the original block content
     local original_block
@@ -1208,14 +1311,21 @@ edit_ssh_host_in_editor() {
 
 # Clones an existing SSH host configuration to a new alias.
 clone_ssh_host() {
-    printBanner "Clone SSH Host"
+    local host_to_clone="$1"
+    if [[ -z "$host_to_clone" ]]; then
+        printBanner "Clone SSH Host ${C_L_YELLOW}(ESC to cancel)${C_BLUE}"
+        host_to_clone=$(select_ssh_host "Select a host to clone:")
+        [[ $? -ne 0 ]] && return # select_ssh_host prints messages
+        # After selection, clear the screen to make way for the new, more specific banner.
+        clear
+    fi
 
-    local host_to_clone
-    host_to_clone=$(select_ssh_host "Select a host to clone:")
-    [[ $? -ne 0 ]] && return # select_ssh_host prints messages
+    # Now that we have the host_to_clone, print a more specific banner.
+    printBanner "Clone Host from ${C_CYAN}'${host_to_clone}' ${C_L_YELLOW}(ESC to cancel)${C_BLUE}"
 
     local new_alias
-    _prompt_for_unique_host_alias new_alias "Enter the new alias for the cloned host" || return
+    # Pass the host_to_clone as the default value for the prompt.
+    _prompt_for_unique_host_alias new_alias "Enter the new alias for the cloned host" "" "$host_to_clone" || return
 
     local original_block
     original_block=$(_get_host_block_from_config "$host_to_clone" "$SSH_CONFIG_PATH")
@@ -1324,9 +1434,11 @@ reorder_ssh_hosts() {
 rename_ssh_host() {
     printBanner "Rename SSH Host Alias"
 
-    local host_to_rename
-    host_to_rename=$(select_ssh_host "Select a host to rename:")
-    [[ $? -ne 0 ]] && return # select_ssh_host prints messages
+    local host_to_rename="$1"
+    if [[ -z "$host_to_rename" ]]; then
+        host_to_rename=$(select_ssh_host "Select a host to rename:")
+        [[ $? -ne 0 ]] && return # select_ssh_host prints messages
+    fi
 
     local new_alias
     # The old alias is both the one to allow (as a no-op) and the default value for the prompt.
@@ -1352,7 +1464,7 @@ rename_ssh_host() {
     # --- Key File Renaming Logic ---
     local old_key_path_convention="${SSH_DIR}/${host_to_rename}_id_ed25519"
     local new_key_path_convention="${SSH_DIR}/${new_alias}_id_ed25519"
-    local current_identity_file; current_identity_file=$(get_ssh_config_value "$host_to_rename" "IdentityFile")
+    local current_identity_file; current_identity_file=$(_get_explicit_ssh_config_value "$host_to_rename" "IdentityFile")
     local expanded_identity_file="${current_identity_file/#\~/$HOME}"
 
     # Check if a conventionally named key exists AND it's the one being used in the config.
@@ -1429,9 +1541,11 @@ _cleanup_orphaned_key() {
 remove_ssh_host() {
     printBanner "Remove SSH Host"
 
-    local host_to_remove
-    host_to_remove=$(select_ssh_host "Select a host to remove:")
-    [[ $? -ne 0 ]] && return
+    local host_to_remove="$1"
+    if [[ -z "$host_to_remove" ]]; then
+        host_to_remove=$(select_ssh_host "Select a host to remove:")
+        [[ $? -ne 0 ]] && return
+    fi
 
     if ! prompt_yes_no "Are you sure you want to remove '${host_to_remove}' from your SSH config?" "n"; then
         printInfoMsg "Removal cancelled."
@@ -1440,7 +1554,7 @@ remove_ssh_host() {
 
     # Get the IdentityFile path *before* removing the host from the config.
     local identity_file_to_check
-    identity_file_to_check=$(get_ssh_config_value "$host_to_remove" "IdentityFile")
+    identity_file_to_check=$(_get_explicit_ssh_config_value "$host_to_remove" "IdentityFile")
 
     # Get the config content without the specified host block
     local new_config_content
@@ -1473,7 +1587,7 @@ export_ssh_hosts() {
     local menu_output
     local header
     # The 5 spaces are to align the header with the menu items, which are prefixed by '❯ [ ] '.
-    header=$(printf "     %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "user@hostname:port")
+    header=$(printf "     %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "user@hostname[:port]")
     menu_output=$(interactive_multi_select_menu "Select hosts to export (space to toggle, enter to confirm):" "$header" "All" "${menu_options[@]}")
     if [[ $? -ne 0 ]]; then
         printInfoMsg "Export cancelled."
@@ -1868,7 +1982,7 @@ list_all_hosts() {
     fi
 
     local header
-    header=$(printf "%-20s %s" "HOST ALIAS" "user@hostname:port (key)")
+    header=$(printf "%-20s %s" "HOST ALIAS" "user@hostname[:port] (key)")
     printMsg "${C_WHITE}${header}${T_RESET}"
     printMsg "${C_GRAY}${DIV}${T_RESET}"
 
@@ -1949,9 +2063,10 @@ backup_ssh_config() {
 # It clears the screen, runs the function, and then prompts to continue.
 run_menu_action() {
     local action_func="$1"
+    shift
     clear
-    # Call the function. It's expected to print its own banner.
-    "$action_func"
+    # Call the function with any remaining arguments. It's expected to print its own banner.
+    "$action_func" "$@"
     # After the action is complete, wait for user input before returning to the menu.
     prompt_to_continue
 }
@@ -2023,17 +2138,105 @@ _run_submenu() {
     done
 }
 
-server_menu() {
-    local -a menu_definition=(
-        "Connect to a server"                "SPECIAL_CONNECT"
-        "List configured servers"            "list_all_hosts"
-        "Test connection to a single server" "test_ssh_connection"
-        "Test connection to ALL servers"     "test_all_ssh_connections"
-        "Add a new server"                   "add_ssh_host"
-        "Edit a server's configuration"      "edit_ssh_host"
-        "Remove a server"                    "remove_ssh_host"
-    )
-    _run_submenu "Server Management" "${menu_definition[@]}"
+interactive_server_management_view() {
+    # Hide cursor and ensure it is shown again when the function returns.
+    printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty
+    trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty' RETURN
+
+    local current_option=0
+    local -a hosts=()
+    local -a menu_options=()
+    local num_options=0
+
+    # (Private) Fetches hosts and formatted details, then clamps the selection index.
+    _refresh_host_list() {
+        mapfile -t hosts < <(get_ssh_hosts)
+        get_detailed_ssh_hosts_menu_options menu_options "true"
+        num_options=${#hosts[@]}
+
+        # Clamp current_option to be within bounds after a list change.
+        if (( current_option >= num_options )); then
+            current_option=$(( num_options - 1 ))
+        fi
+        if (( current_option < 0 )); then
+            current_option=0
+        fi
+    }
+
+    # (Private) Draws the main UI components.
+    _draw_view() {
+        clear
+        printBanner "Server/Host Management"
+        local header; header=$(printf "   %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "user@hostname[:port] (key)")
+        printMsg "${C_WHITE}${header}${T_RESET}"
+        printMsg "${C_GRAY}${DIV}${T_RESET}"
+
+        if [[ $num_options -gt 0 ]]; then
+            for i in "${!menu_options[@]}"; do
+                local pointer=" "
+                local highlight_start=""
+                local highlight_end=""
+                if (( i == current_option )); then
+                    pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"
+                    highlight_start="${T_REVERSE}"
+                    highlight_end="${T_RESET}"
+                fi
+                # The menu_options are already formatted with colors. We add the pointer and highlight.
+                printMsg " ${pointer} ${highlight_start}${menu_options[i]}${highlight_end}"
+            done
+        else
+            printMsg "  ${C_GRAY}(No hosts configured. Press 'a' to add one.)${T_RESET}"
+        fi
+
+        printMsg "${C_GRAY}${DIV}${T_RESET}"
+        printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC${T_RESET} Back"
+        printMsg "  ${T_BOLD}Host Actions:${T_RESET} ${C_L_GREEN}(A)dd${T_RESET} | ${C_L_RED}(D)elete${T_RESET} | (${C_L_CYAN}R${T_RESET})ename | (${C_L_CYAN}C${T_RESET})lone"
+        printMsg "  ${T_BOLD}Host Edit:${T_RESET}    (${C_L_CYAN}e${T_RESET})dit - wizard | (${C_L_CYAN}E${T_RESET})dit - advanced"
+        printMsg "  ${T_BOLD}Connection:${T_RESET}   ${C_L_YELLOW}ENTER${T_RESET} Connect | (${C_L_CYAN}t${T_RESET})est selected | (${C_L_CYAN}T${T_RESET})est all"
+        printMsg "${C_GRAY}${DIV}${T_RESET}"
+    }
+
+    # --- Main Loop ---
+    while true; do
+        _refresh_host_list
+        _draw_view
+
+        local key; key=$(read_single_char)
+        local selected_host=""
+        if (( num_options > 0 )); then
+            selected_host="${hosts[$current_option]}"
+        fi
+
+        case "$key" in
+            "$KEY_UP"|"k")
+                if (( num_options > 0 )); then current_option=$(( (current_option - 1 + num_options) % num_options )); fi ;;
+            "$KEY_DOWN"|"j")
+                if (( num_options > 0 )); then current_option=$(( (current_option + 1) % num_options )); fi ;;
+            "$KEY_ENTER")
+                if [[ -n "$selected_host" ]]; then clear; exec ssh "$selected_host"; fi ;;
+            'a'|'A')
+                run_menu_action "add_ssh_host" ;;
+            'e')
+                if [[ -n "$selected_host" ]]; then run_menu_action "edit_ssh_host" "$selected_host"; fi ;;
+            'E')
+                if [[ -n "$selected_host" ]]; then run_menu_action "edit_ssh_host_in_editor" "$selected_host"; fi ;;
+            'd'|'D')
+                # Corresponds to user request for (D)elete
+                if [[ -n "$selected_host" ]]; then run_menu_action "remove_ssh_host" "$selected_host"; fi ;;
+            'r'|'R')
+                if [[ -n "$selected_host" ]]; then run_menu_action "rename_ssh_host" "$selected_host"; fi ;;
+            'c'|'C')
+                if [[ -n "$selected_host" ]]; then run_menu_action "clone_ssh_host" "$selected_host"; fi ;;
+            't')
+                if [[ -n "$selected_host" ]]; then
+                    clear; printBanner "Test SSH Connection"; _test_connection_for_host "$selected_host"; prompt_to_continue
+                fi ;;
+            'T')
+                run_menu_action "test_all_ssh_connections" ;;
+            "$KEY_ESC"|"q"|"Q")
+                return 0 ;; # Back to main menu
+        esac
+    done
 }
 
 key_menu() {
@@ -2048,8 +2251,6 @@ advanced_menu() {
     local -a menu_definition=(
         "Open SSH config in editor"      "SPECIAL_EDIT_CONFIG"
         "Edit host block in editor"      "edit_ssh_host_in_editor"
-        "Rename a host alias"            "rename_ssh_host"
-        "Clone an existing host"         "clone_ssh_host"
         "Reorder hosts in config file"   "reorder_ssh_hosts"
         "Backup SSH config"              "backup_ssh_config"
         "Export hosts to a file"         "export_ssh_hosts"
@@ -2127,7 +2328,7 @@ main_loop() {
         [[ $? -ne 0 ]] && { break; }
 
         case "${menu_options[$selected_index]}" in
-        "Server Management") server_menu ;;
+        "Server Management") interactive_server_management_view ;;
         "Key Management") key_menu ;;
         "Port Forwarding") interactive_port_forward_manager ;;
         "Advanced Tools") advanced_menu ;;
