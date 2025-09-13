@@ -1023,41 +1023,35 @@ _append_host_to_config() {
     printOkMsg "Host '${host_alias}' added to ${SSH_CONFIG_PATH}${key_msg}."
 }
 
-# (Private) Draws the new interactive UI for adding a host.
-_draw_interactive_add_host_ui() {
-    local new_alias="$1" new_hostname="$2" new_user="$3" new_port="$4" new_identityfile="$5"
+# (Private) Prompts for a new, unique SSH host alias.
+# It allows the user to re-enter an existing alias, which is treated as a no-op if it's the "old" one.
+# Uses a nameref to return the value.
+# Usage: _prompt_for_unique_host_alias alias_var [prompt_text] [old_alias_to_allow] [default_value]
+# Returns 0 on success, 1 on cancellation.
+_prompt_for_unique_host_alias() {
+    local -n out_alias_var="$1"
+    local prompt_text="${2:-Enter a short alias for the host}"
+    local old_alias_to_allow="${3:-}"
+    local default_value="${4:-}"
 
-    _format_add_line() {
-        local key="$1" label="$2" new_val="$3"
+    while true; do
+        # Pass the default value, which might be the old alias or the user's previous (invalid) input.
+        prompt_for_input "$prompt_text" out_alias_var "$default_value" || return 1
 
-        local display_val="${new_val}"
-        if [[ "$label" == "IdentityFile" ]]; then
-            display_val="${new_val/#$HOME/\~}"
+        # If renaming and the user entered the old name, it's a valid "no-op" choice.
+        if [[ -n "$old_alias_to_allow" && "$out_alias_var" == "$old_alias_to_allow" ]]; then
+            return 0
         fi
 
-        if [[ -z "$display_val" ]]; then
-            display_val="${C_GRAY}(not set)${T_RESET}"
+        # Check if host alias already exists in the main config file.
+        if get_ssh_hosts | grep -qFx "$out_alias_var"; then
+            printErrMsg "Host alias '${out_alias_var}' already exists. Please choose another."
+            # Set the default for the next loop iteration to what the user just typed.
+            default_value="$out_alias_var"
         else
-            display_val="${C_L_CYAN}${display_val}${T_RESET}"
+            return 0 # Alias is unique, success
         fi
-
-        # Keep a space for alignment with other UIs that have a change indicator
-        printf "  ${C_L_WHITE}%s)${T_RESET}   %-15s: %b\n" "$key" "$label" "$display_val"
-    }
-
-    printMsg "Configure the new host:"
-    _format_add_line "1" "Host (Alias)" "$new_alias"
-    _format_add_line "2" "HostName" "$new_hostname"
-    _format_add_line "3" "User" "$new_user"
-    _format_add_line "4" "Port" "$new_port"
-    _format_add_line "5" "IdentityFile" "$new_identityfile"
-
-    echo
-    printMsg "  ${C_L_WHITE}c) ${C_L_YELLOW}(C)ancel/(D)iscard${T_RESET} and reset fields"
-    printMsg "  ${C_L_WHITE}s) ${C_L_GREEN}(S)ave${T_RESET} new host and Quit"
-    printMsg "  ${C_L_WHITE}q) ${C_L_YELLOW}(Q)uit${T_RESET} without saving (or press ${C_L_YELLOW}ESC${T_RESET})"
-    echo
-    printMsgNoNewline "${T_QST_ICON} Your choice: "
+    done
 }
 
 # Prompts user for details and adds a new host to the SSH config.
@@ -1095,7 +1089,7 @@ add_ssh_host() {
     while true; do
         clear
         if [[ "$creation_mode" == "clone" ]]; then printBanner "Add New Host (cloned from ${C_L_CYAN}${host_to_clone}${C_BLUE})"; else printBanner "Add New SSH Host"; fi
-        _draw_interactive_add_host_ui "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile"
+        _draw_interactive_host_editor_ui "add" "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile"
 
         local key; key=$(read_single_char)
         case "$key" in
@@ -1304,53 +1298,56 @@ _prompt_for_identity_file_interactive() {
     done
 }
 
-# (Private) Draws the new interactive UI for editing a host.
-# Highlights any values that have changed from the original.
-_draw_interactive_edit_host_ui() {
-    local new_alias="$1" new_hostname="$2" new_user="$3" new_port="$4" new_identityfile="$5"
-    local original_alias="$6" original_hostname="$7" original_user="$8" original_port="$9" original_identityfile="${10}"
+# (Private) Generic UI for the interactive host editors (add, edit, clone).
+# This single function replaces _draw_interactive_add_host_ui, _draw_interactive_edit_host_ui,
+# and _draw_interactive_clone_host_ui, reducing code duplication.
+# Usage: _draw_interactive_host_editor_ui <mode> <new_alias> <new_hostname> ... <original_alias> ...
+_draw_interactive_host_editor_ui() {
+    local mode="$1"
+    local new_alias="$2" new_hostname="$3" new_user="$4" new_port="$5" new_identityfile="$6"
+    local original_alias="$7" original_hostname="$8" original_user="$9" original_port="${10}" original_identityfile="${11}"
 
-    # Helper to format a line, adding a change indicator if needed.
-    _format_edit_line() {
+    # Helper to format a line, adding a change indicator (*) if needed.
+    _format_line() {
         local key="$1" label="$2" new_val="$3" original_val="$4" is_alias="${5:-false}"
 
-        local display_val="${new_val}"
-        if [[ "$label" == "IdentityFile" ]]; then
-            display_val="${new_val/#$HOME/\~}"
-        fi
-
-        if [[ -z "$display_val" ]]; then
-            display_val="${C_GRAY}(not set)${T_RESET}"
-        else
-            display_val="${C_L_CYAN}${display_val}${T_RESET}"
-        fi
+        local display_val="${new_val}"; if [[ "$label" == "IdentityFile" ]]; then display_val="${new_val/#$HOME/\~}"; fi
+        if [[ -z "$display_val" ]]; then display_val="${C_GRAY}(not set)${T_RESET}"; else display_val="${C_L_CYAN}${display_val}${T_RESET}"; fi
 
         local change_indicator=" "
-        if [[ "$is_alias" == "true" ]]; then
-            if [[ "$new_val" != "$original_val" ]]; then
-                change_indicator="${C_L_YELLOW}*${T_RESET}"
-            fi
-        else
-            local expanded_new_val="${new_val/#\~/$HOME}"
-            if [[ "$expanded_new_val" != "${original_val/#\~/$HOME}" ]]; then
-                change_indicator="${C_L_YELLOW}*${T_RESET}"
+        # In 'add' mode, there are no "changes" from an original, so no indicator.
+        if [[ "$mode" != "add" ]]; then
+            if [[ "$is_alias" == "true" ]]; then
+                if [[ "$new_val" != "$original_val" ]]; then change_indicator="${C_L_YELLOW}*${T_RESET}"; fi
+            else
+                local expanded_new_val="${new_val/#\~/$HOME}"
+                if [[ "$expanded_new_val" != "${original_val/#\~/$HOME}" ]]; then change_indicator="${C_L_YELLOW}*${T_RESET}"; fi
             fi
         fi
 
-        printf " ${C_L_WHITE}%s)${T_RESET} %b %-15s: %b\n" "$key" "$change_indicator" "$label" "$display_val"
+        # For clone mode, the alias is always considered a change.
+        if [[ "$mode" == "clone" && "$label" == "Host (Alias)" ]]; then change_indicator="${C_L_YELLOW}*${T_RESET}"; fi
+
+        printf "  ${C_L_WHITE}%s)${T_RESET} %b %-15s: %b\n" "$key" "$change_indicator" "$label" "$display_val"
     }
 
-    printMsg "Choose an option to configure:"
-    _format_edit_line "1" "Host (Alias)" "$new_alias" "$original_alias" "true"
-    _format_edit_line "2" "HostName" "$new_hostname" "$original_hostname"
-    _format_edit_line "3" "User" "$new_user" "$original_user"
-    _format_edit_line "4" "Port" "$new_port" "$original_port"
-    _format_edit_line "5" "IdentityFile" "$new_identityfile" "$original_identityfile"
+    local title="Configure the host details:"
+    if [[ "$mode" == "add" ]]; then title="Configure the new host:"; fi
+    if [[ "$mode" == "clone" ]]; then title="Configure the new cloned host:"; fi
+    printMsg "$title"
+
+    _format_line "1" "Host (Alias)" "$new_alias" "$original_alias" "true"
+    _format_line "2" "HostName"     "$new_hostname" "$original_hostname"
+    _format_line "3" "User"         "$new_user" "$original_user"
+    _format_line "4" "Port"         "$new_port" "$original_port"
+    _format_line "5" "IdentityFile" "$new_identityfile" "$original_identityfile"
 
     echo
-    printMsg " ${C_L_WHITE}c) ${C_L_YELLOW}(C)ancel/(D)iscard${T_RESET} all pending changes"
-    printMsg " ${C_L_WHITE}s) ${C_L_GREEN}(S)ave changes and Quit${T_RESET}"
-    printMsg " ${C_L_WHITE}q) ${C_L_YELLOW}(Q)uit${T_RESET} without saving (or press ${C_L_YELLOW}ESC${T_RESET})"
+    local discard_text="iscard all pending changes"
+    if [[ "$mode" == "add" ]]; then discard_text="eset fields"; fi
+    printMsg "  ${C_L_WHITE}c) ${C_L_YELLOW}(C)ancel/(D)${discard_text}${T_RESET}"
+    printMsg "  ${C_L_WHITE}s) ${C_L_GREEN}(S)ave${T_RESET} and Quit"
+    printMsg "  ${C_L_WHITE}q) ${C_L_YELLOW}(Q)uit${T_RESET} without saving (or press ${C_L_YELLOW}ESC${T_RESET})"
     echo
     printMsgNoNewline "${T_QST_ICON} Your choice: "
 }
@@ -1379,8 +1376,8 @@ edit_ssh_host() {
     while true; do
         clear
         printBanner "Edit SSH Host - ${C_L_CYAN}${original_alias}${C_BLUE}"
-        _draw_interactive_edit_host_ui "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile" \
-                                       "$original_alias" "$original_hostname" "$original_user" "$original_port" "$original_identityfile"
+        _draw_interactive_host_editor_ui "edit" "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile" \
+                                         "$original_alias" "$original_hostname" "$original_user" "$original_port" "$original_identityfile"
 
         local key; key=$(read_single_char)
 
@@ -1577,58 +1574,6 @@ edit_ssh_host_in_editor() {
     printOkMsg "Host '${host_to_edit}' has been updated from editor."
 }
 
-# (Private) Draws the new interactive UI for cloning a host.
-# Highlights any values that have changed from the original.
-_draw_interactive_clone_host_ui() {
-    local new_alias="$1" new_hostname="$2" new_user="$3" new_port="$4" new_identityfile="$5"
-    local original_hostname="$6" original_user="$7" original_port="$8" original_identityfile="$9"
-
-    # Helper to format a line, adding a change indicator if needed.
-    _format_clone_line() {
-        local key="$1" label="$2" new_val="$3" original_val="$4"
-
-        local display_val="${new_val}"
-        if [[ "$label" == "IdentityFile" ]]; then
-            display_val="${new_val/#$HOME/\~}"
-        fi
-
-        if [[ -z "$display_val" ]]; then
-            display_val="${C_GRAY}(not set)${T_RESET}"
-        else
-            display_val="${C_L_CYAN}${display_val}${T_RESET}"
-        fi
-
-        local change_indicator=" "
-        # For the alias, there is no original, it's always new.
-        if [[ "$label" != "Host (Alias)" ]]; then
-            local expanded_new_val="${new_val/#\~/$HOME}"
-            local expanded_orig_val="${original_val/#\~/$HOME}"
-            if [[ "$expanded_new_val" != "$expanded_orig_val" ]]; then
-                change_indicator="${C_L_YELLOW}*${T_RESET}"
-            fi
-        else
-            # The alias is always a "change" in a sense.
-            change_indicator="${C_L_YELLOW}*${T_RESET}"
-        fi
-
-        printf "  ${C_L_WHITE}%s)${T_RESET} %b %-15s: %b\n" "$key" "$change_indicator" "$label" "$display_val"
-    }
-
-    printMsg "Configure the new cloned host:"
-    _format_clone_line "1" "Host (Alias)" "$new_alias" "" # No original alias
-    _format_clone_line "2" "HostName" "$new_hostname" "$original_hostname"
-    _format_clone_line "3" "User" "$new_user" "$original_user"
-    _format_clone_line "4" "Port" "$new_port" "$original_port"
-    _format_clone_line "5" "IdentityFile" "$new_identityfile" "$original_identityfile"
-
-    echo
-    printMsg "  ${C_L_WHITE}c) ${C_L_YELLOW}(C)ancel/(D)iscard${T_RESET} all pending changes"
-    printMsg "  ${C_L_WHITE}s) ${C_L_GREEN}(S)ave${T_RESET} new host and Quit"
-    printMsg "  ${C_L_WHITE}q) ${C_L_YELLOW}(Q)uit${T_RESET} without saving (or press ${C_L_YELLOW}ESC${T_RESET})"
-    echo
-    printMsgNoNewline "${T_QST_ICON} Your choice: "
-}
-
 # Clones an existing SSH host configuration to a new alias using an interactive UI.
 clone_ssh_host() {
     local host_to_clone="$1"
@@ -1657,8 +1602,8 @@ clone_ssh_host() {
 
     while true; do
         clear; printBanner "Clone Host from ${C_L_CYAN}${host_to_clone}${C_BLUE}"
-        _draw_interactive_clone_host_ui "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile" \
-                                        "$original_hostname" "$original_user" "$original_port" "$original_identityfile"
+        _draw_interactive_host_editor_ui "clone" "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile" \
+                                         "" "$original_hostname" "$original_user" "$original_port" "$original_identityfile"
 
         local key; key=$(read_single_char)
         case "$key" in
