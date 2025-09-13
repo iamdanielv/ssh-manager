@@ -1135,30 +1135,18 @@ add_ssh_host() {
     add_choice_idx=$(interactive_single_select_menu "How would you like to add the new host?" "" "${add_options[@]}")
     if [[ $? -ne 0 ]]; then printInfoMsg "Host creation cancelled."; return; fi
 
-    # --- Step 2: Set initial values ---
-    local initial_alias="" initial_hostname="" initial_user="$USER" initial_port="22" initial_identityfile=""
-    local creation_mode="scratch"
-    local host_to_clone=""
+    # --- Step 2: Handle choice ---
     if [[ "${add_options[$add_choice_idx]}" == "Clone settings from an existing host" ]]; then
-        host_to_clone=$(select_ssh_host "Select a host to clone settings from:")
-        if [[ $? -ne 0 ]]; then return; fi
-        creation_mode="clone"
-
-        local i=1; while true; do
-            local proposed_alias="${host_to_clone}-clone"; [[ $i -gt 1 ]] && proposed_alias+="-${i}"
-            if ! get_ssh_hosts | grep -qFx "$proposed_alias"; then initial_alias="$proposed_alias"; break; fi; ((i++))
-        done
-        initial_hostname=$(get_ssh_config_value "$host_to_clone" "HostName")
-        initial_user=$(get_ssh_config_value "$host_to_clone" "User")
-        initial_port=$(get_ssh_config_value "$host_to_clone" "Port")
-        initial_identityfile=$(_get_explicit_ssh_config_value "$host_to_clone" "IdentityFile")
-        [[ -z "$initial_port" ]] && initial_port="22"
+        # Delegate to the dedicated clone function.
+        clone_ssh_host
+        return
     fi
 
+    # --- Create from scratch logic ---
+    local initial_alias="" initial_hostname="" initial_user="$USER" initial_port="22" initial_identityfile=""
     local new_alias="$initial_alias" new_hostname="$initial_hostname" new_user="$initial_user" new_port="$initial_port" new_identityfile="$initial_identityfile"
 
     local banner_text="Add New SSH Host"
-    if [[ "$creation_mode" == "clone" ]]; then banner_text="Add New Host (cloned from ${C_L_CYAN}${host_to_clone}${C_BLUE})"; fi
 
     # Call the shared editor loop. It will modify the 'new_*' variables.
     if ! _interactive_host_editor_loop "add" "$banner_text" \
@@ -1167,15 +1155,15 @@ add_ssh_host() {
         return # User cancelled
     fi
 
-    # --- Save Logic (executed if the loop returns 0) ---
+    # --- Save Logic ---
     if [[ -z "$new_alias" || -z "$new_hostname" ]]; then printErrMsg "Host Alias and HostName cannot be empty."; sleep 2; return 1; fi
     if get_ssh_hosts | grep -qFx "$new_alias"; then printErrMsg "Host alias '${new_alias}' already exists."; sleep 2; return 1; fi
 
     _append_host_to_config "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile"
 
     if [[ -n "$new_identityfile" ]]; then
-        local default_copy="n"; [[ "$creation_mode" == "scratch" ]] && default_copy="y"
-        if prompt_yes_no "Copy public key to the new server now?" "$default_copy"; then copy_ssh_id_for_host "$new_alias" "${new_identityfile}.pub"; fi
+        # When creating from scratch, it's more likely the user wants to copy the key immediately.
+        if prompt_yes_no "Copy public key to the new server now?" "y"; then copy_ssh_id_for_host "$new_alias" "${new_identityfile}.pub"; fi
     fi
     if prompt_yes_no "Test the connection to '${new_alias}' now?" "y"; then echo; _test_connection_for_host "$new_alias"; fi
 }
@@ -1625,6 +1613,10 @@ clone_ssh_host() {
 
     if [[ -n "$new_identityfile" ]] && prompt_yes_no "Copy public key to the new server now?" "n"; then
         copy_ssh_id_for_host "$new_alias" "${new_identityfile}.pub"
+    fi
+
+    if prompt_yes_no "Test the connection to '${new_alias}' now?" "y"; then
+        echo; _test_connection_for_host "$new_alias"
     fi
 }
 
