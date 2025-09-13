@@ -421,6 +421,9 @@ print_usage() {
     printMsg "\n${T_ULINE}Options:${T_RESET}"
     printMsg "  ${C_L_BLUE}-c, --connect${T_RESET}  Go directly to host selection for connecting"
     printMsg "  ${C_L_BLUE}-a, --add${T_RESET}      Go directly to the 'Add a new server' menu"
+    printMsg "  ${C_L_BLUE}-p, --port-forward${T_RESET} Go directly to the 'Port Forwarding' menu"
+    printMsg "  ${C_L_BLUE}-l, --list-hosts${T_RESET}    List all configured hosts and exit"
+    printMsg "  ${C_L_BLUE}-f, --list-forwards${T_RESET}  List active port forwards and exit"
     printMsg "  ${C_L_BLUE}-t, --test [host|all]${T_RESET}  Test connection to a host, all hosts, or show menu"
     printMsg "  ${C_L_BLUE}-h, --help${T_RESET}     Show this help message"
 }
@@ -1851,6 +1854,28 @@ list_active_port_forwards() {
     printMsg ""
 }
 
+# Lists all configured SSH hosts with details.
+list_all_hosts() {
+    local -a menu_options
+    # Get detailed host list, including key info.
+    get_detailed_ssh_hosts_menu_options menu_options "true"
+
+    if [[ ${#menu_options[@]} -eq 0 ]]; then
+        printInfoMsg "No hosts found in your SSH config file."
+        return
+    fi
+
+    local header
+    header=$(printf "%-20s %s" "HOST ALIAS" "user@hostname:port (key)")
+    printMsg "${C_WHITE}${header}${T_RESET}"
+    printMsg "${C_GRAY}${DIV}${T_RESET}"
+
+    for option in "${menu_options[@]}"; do
+        # The menu options are already formatted with colors.
+        printMsg "${option}"
+    done
+}
+
 # Interactively stops an active SSH port forward.
 stop_port_forward() {
     printBanner "Stop a Port Forward"
@@ -2141,6 +2166,25 @@ main() {
                 _setup_environment "ssh" "ssh-keygen" "ssh-copy-id" "awk" "grep"
                 # The add_ssh_host function is fully interactive and self-contained.
                 add_ssh_host
+                exit 0
+                ;;
+            -p|--port-forward)
+                # Prereqs for port forwarding. ps and kill are for managing forwards.
+                _setup_environment "ssh" "awk" "grep" "ps" "kill"
+                # The function is self-contained and has its own loop.
+                interactive_port_forward_manager
+                exit 0
+                ;;
+            -l|--list-hosts)
+                # Prereqs for listing hosts.
+                _setup_environment "ssh" "awk" "grep"
+                list_all_hosts
+                exit 0
+                ;;
+            -f|--list-forwards)
+                # Prereqs for listing port forwards.
+                _setup_environment "ps" "grep"
+                list_active_port_forwards
                 exit 0
                 ;;
             -c|--connect | -t|--test)

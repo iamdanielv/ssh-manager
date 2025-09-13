@@ -29,6 +29,9 @@ Bypass the interactive menus for quick, direct actions:
 
 - `-c, --connect`: Go directly to host selection for connecting.
 - `-a, --add`: Go directly to the 'Add a new server' menu.
+- `-p, --port-forward`: Go directly to the 'Port Forwarding' menu.
+- `-l, --list-hosts`: List all configured hosts and exit.
+- `-f, --list-forwards`: List active port forwards and exit.
 - `-t, --test [host|all]`: Test connection to a specific host, all hosts, or show the selection menu.
 - `-h, --help`: Show the help message.
 
