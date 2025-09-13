@@ -245,13 +245,17 @@ interactive_multi_select_menu() {
             output+=" ${pointer} ${highlight_start}${checkbox} ${options[i]}${highlight_end}${T_RESET}${T_CLEAR_LINE}\n"; done
         echo -ne "$output"; }
     printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty; trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty' EXIT
-    echo -e "${C_GRAY}(Use ${C_L_CYAN}↓/↑${C_GRAY} to navigate, ${C_L_CYAN}space${C_GRAY} to select, ${C_L_GREEN}enter${C_GRAY} to confirm, ${C_L_YELLOW}q/esc${C_GRAY} to cancel)${T_RESET}" >/dev/tty
     echo -e "${T_QST_ICON} ${prompt}" >/dev/tty; echo -e "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
     if [[ -n "$header" ]]; then
         echo -e "  ${header}${T_RESET}" >/dev/tty
     fi
     _draw_menu_options >/dev/tty
-    local key; local menu_height=$((num_options + 3 + header_lines)); while true; do
+    echo -e "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
+    echo -e "  ${C_L_CYAN}↓/↑${C_WHITE} Move | ${C_L_CYAN}SPACE${C_WHITE} to select | ${C_L_GREEN}ENTER${C_WHITE} to confirm | ${C_L_YELLOW}Q/ESC${C_GRAY} to cancel${T_RESET}" >/dev/tty
+
+    move_cursor_up 2 # Move to end of options list
+
+    local key; local lines_above=$((2 + header_lines)); local lines_below=2; while true; do
         move_cursor_up "$num_options"; key=$(read_single_char </dev/tty)
         case "$key" in
             "$KEY_UP"|"k") current_option=$(( (current_option - 1 + num_options) % num_options ));;
@@ -262,7 +266,7 @@ interactive_multi_select_menu() {
                     else local all_selected=1; for ((i=1; i<num_options; i++)); do if (( selected_options[i] == 0 )); then all_selected=0; break; fi; done; selected_options[0]=$all_selected; fi
                 fi;;
             "$KEY_ENTER"|"$KEY_ESC"|"q")
-                clear_lines_down "$menu_height"; clear_lines_up $((3 + header_lines))
+                clear_lines_down $((num_options + lines_below)); clear_lines_up "$lines_above"
                 if [[ "$key" == "$KEY_ENTER" ]]; then
                     break
                 else
@@ -291,19 +295,24 @@ interactive_single_select_menu() {
             output+=" ${pointer} ${highlight_start} ${options[i]} ${highlight_end}${T_RESET}${T_CLEAR_LINE}\n"; done
         echo -ne "$output"; }
     printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty; trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty' EXIT
-    echo -e "${C_GRAY}(Use ${C_L_CYAN}↓/↑${C_GRAY} to navigate, ${C_L_GREEN}enter${C_GRAY} to confirm, ${C_L_YELLOW}q/esc${C_GRAY} to cancel)${T_RESET}" >/dev/tty
     echo -e "${T_QST_ICON} ${prompt}" >/dev/tty; echo -e "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
     if [[ -n "$header" ]]; then
         echo -e "  ${header}${T_RESET}" >/dev/tty
     fi
     _draw_menu_options >/dev/tty
-    local key; local menu_height=$((num_options + 3 + header_lines)); while true; do
+    echo -e "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
+    #echo -e "${C_GRAY}(Use ${C_L_CYAN}↓/↑${C_GRAY} to navigate, ${C_L_GREEN}enter${C_GRAY} to confirm, ${C_L_YELLOW}q/esc${C_GRAY} to cancel)${T_RESET}" >/dev/tty
+    echo -e "  ${C_L_CYAN}↓/↑/j/k${C_WHITE} Move | ${C_L_GREEN}ENTER${C_WHITE} to confirm, ${C_L_YELLOW}Q/ESC${C_GRAY} to cancel${T_RESET}" >/dev/tty
+
+    move_cursor_up 2 # Move to end of options list
+
+    local key; local lines_above=$((2 + header_lines)); local lines_below=2; while true; do
         move_cursor_up "$num_options"; key=$(read_single_char </dev/tty)
         case "$key" in
             "$KEY_UP"|"k") current_option=$(( (current_option - 1 + num_options) % num_options ));;
             "$KEY_DOWN"|"j") current_option=$(( (current_option + 1) % num_options ));;
-            "$KEY_ENTER") clear_lines_down "$menu_height"; clear_lines_up $((3 + header_lines)); echo "$current_option"; return 0;;
-            "$KEY_ESC"|"q") clear_lines_down "$menu_height"; clear_lines_up $((3 + header_lines)); return 1;;
+            "$KEY_ENTER") clear_lines_down $((num_options + lines_below)); clear_lines_up "$lines_above"; echo "$current_option"; return 0;;
+            "$KEY_ESC"|"q") clear_lines_down $((num_options + lines_below)); clear_lines_up "$lines_above"; return 1;;
         esac; _draw_menu_options >/dev/tty; done
 }
 
@@ -320,9 +329,14 @@ interactive_reorder_menu() {
             output+="  ${pointer} ${highlight_start}${current_items[i]}${highlight_end}${T_RESET}${T_CLEAR_LINE}\n"; done
         echo -ne "$output"; }
     printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty; trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty' EXIT
+    echo -e "${T_QST_ICON} ${prompt}" >/dev/tty; echo -e "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
+    _draw_reorder_menu >/dev/tty
+    echo -e "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
     echo -e "${C_GRAY}(${C_L_CYAN}↓/↑/j/k${C_GRAY} move, ${C_L_CYAN}space${C_GRAY} grab/drop, ${C_L_GREEN}enter${C_GRAY} save, ${C_L_YELLOW}q/esc${C_GRAY} cancel)${T_RESET}" >/dev/tty
-    echo -e "${T_QST_ICON} ${prompt}" >/dev/tty; echo -e "${C_GRAY}${DIV}${T_RESET}" >/dev/tty; _draw_reorder_menu >/dev/tty
-    local key; local menu_height=$((num_items + 3)); while true; do
+
+    move_cursor_up 2 # Move to end of items list
+
+    local key; local lines_above=2; local lines_below=2; while true; do
         move_cursor_up "$num_items"; key=$(read_single_char </dev/tty)
         case "$key" in
             "$KEY_UP"|"k")
@@ -334,8 +348,8 @@ interactive_reorder_menu() {
                     if (( held_item_idx < num_items - 1 )); then local next_idx=$((held_item_idx + 1)); local tmp="${current_items[held_item_idx]}"; current_items[held_item_idx]="${current_items[next_idx]}"; current_items[next_idx]="$tmp"; held_item_idx=$next_idx; current_pos=$next_idx; fi
                 else current_pos=$(( (current_pos + 1) % num_items )); fi;;
             ' ') (( held_item_idx == current_pos )) && held_item_idx=-1 || held_item_idx=$current_pos ;;
-            "$KEY_ENTER") clear_lines_down "$menu_height"; printf "%s\n" "${current_items[@]}"; return 0;;
-            "$KEY_ESC"|"q") clear_lines_down "$menu_height"; return 1;;
+            "$KEY_ENTER") clear_lines_down $((num_items + lines_below)); clear_lines_up "$lines_above"; printf "%s\n" "${current_items[@]}"; return 0;;
+            "$KEY_ESC"|"q") clear_lines_down $((num_items + lines_below)); clear_lines_up "$lines_above"; return 1;;
         esac; _draw_reorder_menu >/dev/tty; done
 }
 
