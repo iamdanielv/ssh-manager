@@ -853,8 +853,8 @@ regenerate_public_key() {
 }
 
 # An interactive prompt for user input that supports cancellation.
-# It reads input character-by-character to provide a responsive feel
-# and handles ESC for cancellation.
+# It provides a rich line-editing experience including cursor movement
+# (left/right/home/end), insertion, and deletion (backspace/delete).
 # Usage: prompt_for_input "Prompt text" "variable_name" ["default_value"] ["allow_empty"]
 # Returns 0 on success (Enter), 1 on cancellation (ESC).
 prompt_for_input() {
@@ -863,21 +863,32 @@ prompt_for_input() {
     local default_val="${3:-}"
     local allow_empty="${4:-false}"
 
-    # Pre-fill the input string with the default value to allow editing/clearing it.
+    # Pre-fill the input string with the default value.
     local input_str="$default_val"
+    # Cursor position is the index of the character *before* which to insert.
+    # 0 is the beginning, length is the end.
+    local cursor_pos=${#input_str}
     local key
 
     while true; do
-        # Draw the prompt and current input string, with the cursor visible at the end.
+        # Draw the prompt and current input string.
         clear_current_line >/dev/tty
         printMsgNoNewline "${T_QST_ICON} ${prompt_text}: ${C_L_CYAN}${input_str}${T_RESET}" >/dev/tty
+
+        # Move cursor to the correct position within the input string.
+        # The cursor is currently at the end of the line. We need to move it
+        # left by the number of characters that are *after* the cursor position.
+        local chars_after_cursor=$(( ${#input_str} - cursor_pos ))
+        if (( chars_after_cursor > 0 )); then
+            # \e[<N>D moves cursor left N columns
+            echo -ne "\e[${chars_after_cursor}D" >/dev/tty
+        fi
 
         key=$(read_single_char </dev/tty)
 
         case "$key" in
             "$KEY_ENTER")
                 # The final value is whatever is in the input buffer.
-                # This allows the user to backspace to clear a default value.
                 local final_input="$input_str"
                 if [[ -n "$final_input" || "$allow_empty" == "true" ]]; then
                     var_ref="$final_input"
@@ -886,7 +897,7 @@ prompt_for_input() {
                     printMsg "${T_QST_ICON} ${prompt_text}: ${C_L_GREEN}${final_input}${T_RESET}"
                     return 0 # Success
                 fi
-                # If not valid, loop continues, waiting for more input or ESC.
+                # If not valid (empty and not allowed), loop continues.
                 ;;
             "$KEY_ESC")
                 clear_current_line >/dev/tty
@@ -894,11 +905,38 @@ prompt_for_input() {
                 return 1 # Cancelled
                 ;;
             "$KEY_BACKSPACE")
-                [[ -n "$input_str" ]] && input_str="${input_str%?}"
+                if (( cursor_pos > 0 )); then
+                    # Remove character before the cursor
+                    input_str="${input_str:0:cursor_pos-1}${input_str:cursor_pos}"
+                    ((cursor_pos--))
+                fi
+                ;;
+            "$KEY_DELETE")
+                if (( cursor_pos < ${#input_str} )); then
+                    # Remove character at the cursor
+                    input_str="${input_str:0:cursor_pos}${input_str:cursor_pos+1}"
+                    # cursor_pos does not change
+                fi
+                ;;
+            "$KEY_LEFT")
+                if (( cursor_pos > 0 )); then ((cursor_pos--)); fi
+                ;;
+            "$KEY_RIGHT")
+                if (( cursor_pos < ${#input_str} )); then ((cursor_pos++)); fi
+                ;;
+            "$KEY_HOME")
+                cursor_pos=0
+                ;;
+            "$KEY_END")
+                cursor_pos=${#input_str}
                 ;;
             *)
                 # Append single, printable characters. Ignore control sequences.
-                (( ${#key} == 1 )) && [[ "$key" =~ [[:print:]] ]] && input_str+="$key"
+                if (( ${#key} == 1 )) && [[ "$key" =~ [[:print:]] ]]; then
+                    # Insert character at cursor position
+                    input_str="${input_str:0:cursor_pos}${key}${input_str:cursor_pos}"
+                    ((cursor_pos++))
+                fi
                 ;;
         esac
     done
