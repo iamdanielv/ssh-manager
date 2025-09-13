@@ -573,7 +573,7 @@ copy_ssh_id() {
     fi
 
     local key_idx
-    key_idx=$(interactive_single_select_menu "Select the public key to copy:" "${pub_keys[@]}")
+    key_idx=$(interactive_single_select_menu "Select the public key to copy:" "" "${pub_keys[@]}")
     [[ $? -ne 0 ]] && { printInfoMsg "Operation cancelled."; return; }
     local selected_key="${pub_keys[$key_idx]}"
 
@@ -607,7 +607,7 @@ generate_ssh_key() {
 
     local -a key_types=("ed25519 (recommended)" "rsa (legacy, 4096 bits)")
     local selected_index
-    selected_index=$(interactive_single_select_menu "Select the type of key to generate:" "${key_types[@]}")
+    selected_index=$(interactive_single_select_menu "Select the type of key to generate:" "" "${key_types[@]}")
     [[ $? -ne 0 ]] && { printInfoMsg "Operation cancelled."; return; }
 
     local key_type_selection="${key_types[$selected_index]}"
@@ -796,7 +796,7 @@ _select_and_get_existing_key() {
     for pub_key in "${pub_keys[@]}"; do private_key_paths+=("${pub_key%.pub}"); done
 
     local key_idx
-    key_idx=$(interactive_single_select_menu "Select the private key to use:" "${private_key_paths[@]}") || return 1
+    key_idx=$(interactive_single_select_menu "Select the private key to use:" "" "${private_key_paths[@]}") || return 1
     out_identity_file="${private_key_paths[$key_idx]}"
     return 0
 }
@@ -827,7 +827,7 @@ _get_identity_file_for_new_host() {
     fi
 
     local key_choice_idx
-    key_choice_idx=$(interactive_single_select_menu "How do you want to handle the SSH key for this host?" "${key_options[@]}")
+    key_choice_idx=$(interactive_single_select_menu "How do you want to handle the SSH key for this host?" "" "${key_options[@]}")
     if [[ $? -ne 0 ]]; then return 1; fi
     local selected_key_option="${key_options[$key_choice_idx]}"
 
@@ -908,7 +908,7 @@ add_ssh_host() {
     # --- Step 1: Choose to create from scratch or clone ---
     local -a add_options=("Create a new host from scratch" "Clone settings from an existing host")
     local add_choice_idx
-    add_choice_idx=$(interactive_single_select_menu "How would you like to add the new host?" "${add_options[@]}")
+    add_choice_idx=$(interactive_single_select_menu "How would you like to add the new host?" "" "${add_options[@]}")
     if [[ $? -ne 0 ]]; then
         printInfoMsg "Host creation cancelled."
         return
@@ -1692,19 +1692,16 @@ backup_ssh_config() {
     fi
 }
 
-# Helper to run a menu action, clearing the screen before and after,
-# and pausing for the user to see the result.
+# (Private) A wrapper for running a menu action.
+# It clears the screen, runs the function, and then prompts to continue.
 run_menu_action() {
     local action_func="$1"
-    shift # The rest of the arguments are for the action function
     clear
-    # Call the function that was passed as an argument
-    "$action_func" "$@"
+    # Call the function. It's expected to print its own banner.
+    "$action_func"
+    # After the action is complete, wait for user input before returning to the menu.
     prompt_to_continue
-    clear
 }
-
-# --- Main Menu Sub-loops ---
 
 # (Private) Generic function to display and handle a submenu loop.
 # It takes a banner title, an array of ordered options, and a map of options to actions.
@@ -1722,7 +1719,7 @@ _run_submenu() {
         printBanner "$banner_title"
 
         local selected_index
-        selected_index=$(interactive_single_select_menu "Select an action:" "${menu_options[@]}")
+        selected_index=$(interactive_single_select_menu "Select an action:" "" "${menu_options[@]}")
         [[ $? -ne 0 ]] && break # ESC/q from menu returns to the previous menu
 
         local selected_option="${menu_options[$selected_index]}"
@@ -1854,15 +1851,8 @@ direct_test() {
     fi
 
     # Target is a specific host. First, validate it exists.
-    local host_exists=false
-    while IFS= read -r host; do
-        if [[ "$host" == "$target" ]]; then
-            host_exists=true
-            break
-        fi
-    done < <(get_ssh_hosts)
-
-    if [[ "$host_exists" == "true" ]]; then
+    # Use grep with -F (fixed string) and -x (exact line match) for robust validation.
+    if get_ssh_hosts | grep -qFx "$target"; then
         printBanner "Test SSH Connection"
         _test_connection_for_host "$target"
     else
@@ -1892,7 +1882,7 @@ main_loop() {
         )
 
         local selected_index
-        selected_index=$(interactive_single_select_menu "What would you like to do?" "${menu_options[@]}")
+        selected_index=$(interactive_single_select_menu "What would you like to do?" "" "${menu_options[@]}")
         [[ $? -ne 0 ]] && { break; }
 
         case "${menu_options[$selected_index]}" in
