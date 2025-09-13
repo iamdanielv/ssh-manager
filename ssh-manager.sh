@@ -1927,11 +1927,11 @@ import_ssh_hosts() {
 # Usage: _test_connection_for_host <host_alias>
 _test_connection_for_host() {
     local host_to_test="$1"
-    # -o BatchMode=yes: Never ask for passwords. Fails if one is needed.
-    # -o ConnectTimeout=10: Fail if connection is not established in 10 seconds.
-    # 'exit' is a simple command that immediately closes the connection.
+    # -o BatchMode=yes: Never ask for passwords.
+    # -o ConnectTimeout=5: A shorter timeout is better for quick tests.
+    # 'exit' is a simple command that immediately closes the connection upon success.
     if run_with_spinner "Testing connection to '${host_to_test}'..." \
-        ssh -o BatchMode=yes -o ConnectTimeout=10 "${host_to_test}" 'exit'
+        ssh -o BatchMode=yes -o ConnectTimeout=5 "${host_to_test}" 'exit'
     then
         # remove the spinner output to reduce visual clutter
         clear_lines_up 1
@@ -1963,14 +1963,15 @@ _test_single_host_in_background() {
     local result_dir="$2"
     # The result file is named after the host, with slashes replaced to be safe.
     local result_file="${result_dir}/${host_to_test//\//_}"
-
-    if ssh -o BatchMode=yes -o ConnectTimeout=10 "${host_to_test}" 'exit' &>/dev/null; then
+ 
+    # Run ssh only ONCE, capturing stderr and checking the exit code.
+    # This is much faster for failed connections than running it twice.
+    # A shorter timeout (5s) is used to speed up the "all hosts" test.
+    local error_output
+    if error_output=$(ssh -o BatchMode=yes -o ConnectTimeout=5 "${host_to_test}" 'exit' 2>&1); then
         echo "success" > "$result_file"
     else
-        # Capture the error message from SSH for later display.
-        local error_output
-        error_output=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "${host_to_test}" 'exit' 2>&1)
-        # If the file is empty (e.g., timeout), write a generic error.
+        # If the command failed but produced no output (e.g., timeout), provide a generic message.
         if [[ -z "$error_output" ]]; then
             echo "Connection timed out or failed without error message." > "$result_file"
         else
