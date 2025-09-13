@@ -359,12 +359,14 @@ interactive_reorder_menu() {
 #
 # Usage: _interactive_list_view <banner> <header_func> <refresh_func> <key_handler_func> <footer_func>
 #   - banner: The title string to display at the top.
-#   - header_func: The name of a function that prints the list's column headers.
-#   - refresh_func: The name of a function that populates the data arrays. It must accept two
-#                   nameref arguments: the first for the display strings, the second for raw data payloads.
-#   - key_handler_func: The name of a function to handle key presses. It receives the key, the selected
-#                       data payload, and the selected index. It must return:
-#                       0 = no-op, 1 = refresh list, 2 = exit view.
+#   - header_func: Name of a function that prints the list's column headers.
+#   - refresh_func: Name of a function that populates the data arrays. It must accept two
+#                   nameref arguments: one for display strings, one for raw data payloads.
+#   - key_handler_func: Name of a function to handle key presses. It receives the key, the selected
+#                       data payload, the selected index (before move), a nameref to the current index,
+#                       the total number of options, and a nameref for the result. It is responsible for
+#                       all navigation logic. It must set the result nameref to one of:
+#                       "noop" - redraw, "refresh" - reload data, "exit" - close the view.
 #   - footer_func: The name of a function that prints the help text at the bottom.
 _interactive_list_view() {
     local banner="$1"
@@ -420,12 +422,17 @@ _interactive_list_view() {
         _draw_view
         local key; key=$(read_single_char)
         local selected_payload=""; if (( num_options > 0 )); then selected_payload="${data_payloads[$current_option]}"; fi
-        case "$key" in
-            "$KEY_UP"|"k") if (( num_options > 0 )); then current_option=$(( (current_option - 1 + num_options) % num_options )); fi;;
-            "$KEY_DOWN"|"j") if (( num_options > 0 )); then current_option=$(( (current_option + 1) % num_options )); fi;;
-            *) local handler_result; "$key_handler_func" "$key" "$selected_payload" "$current_option" handler_result
-               if [[ "$handler_result" -eq 1 ]]; then _refresh_data; elif [[ "$handler_result" -eq 2 ]]; then break; fi;;
-        esac
+
+        # Delegate ALL key handling to the specific view's handler.
+        local handler_result="noop"
+        "$key_handler_func" "$key" "$selected_payload" "$current_option" current_option "$num_options" handler_result
+
+        if [[ "$handler_result" == "refresh" ]]; then
+            _refresh_data
+        elif [[ "$handler_result" == "exit" ]]; then
+            break
+        fi
+        # "noop" does nothing and the loop continues, redrawing the view.
     done
 }
 
@@ -2483,22 +2490,31 @@ _port_forward_view_refresh() {
 _port_forward_view_key_handler() {
     local key="$1"
     local selected_payload="$2"
-    # local selected_index="$3" # Unused
-    local -n out_result="$4"
-    out_result=0 # Default to no-op
+    # local selected_index="$3" # Unused before move
+    local -n current_option_ref="$4"
+    local num_options="$5"
+    local -n out_result="$6"
+
+    out_result="noop"
     local idx type spec host desc pid
     if [[ -n "$selected_payload" ]]; then IFS='|' read -r idx type spec host desc pid <<< "$selected_payload"; fi
     case "$key" in
-        'a'|'A') run_menu_action "add_saved_port_forward"; out_result=1 ;;
-        'e'|'E') if [[ -n "$selected_payload" ]]; then run_menu_action "edit_saved_port_forward" "$idx"; out_result=1; fi ;;
-        'd'|'D') if [[ -n "$selected_payload" ]]; then run_menu_action "delete_saved_port_forward" "$idx" "$type" "$spec" "$host"; out_result=1; fi ;;
-        'c'|'C') if [[ -n "$selected_payload" ]]; then run_menu_action "clone_saved_port_forward" "$type" "$spec" "$host" "$desc"; out_result=1; fi ;;
+        "$KEY_UP"|"k")
+            if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref - 1 + num_options) % num_options )); fi
+            ;;
+        "$KEY_DOWN"|"j")
+            if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref + 1) % num_options )); fi
+            ;;
+        'a'|'A') run_menu_action "add_saved_port_forward"; out_result="refresh" ;;
+        'e'|'E') if [[ -n "$selected_payload" ]]; then run_menu_action "edit_saved_port_forward" "$idx"; out_result="refresh"; fi ;;
+        'd'|'D') if [[ -n "$selected_payload" ]]; then run_menu_action "delete_saved_port_forward" "$idx" "$type" "$spec" "$host"; out_result="refresh"; fi ;;
+        'c'|'C') if [[ -n "$selected_payload" ]]; then run_menu_action "clone_saved_port_forward" "$type" "$spec" "$host" "$desc"; out_result="refresh"; fi ;;
         "$KEY_ENTER")
             if [[ -n "$selected_payload" ]]; then
                 if [[ -n "$pid" ]]; then run_menu_action "deactivate_port_forward" "$pid" "$spec" "$host"; else run_menu_action "activate_port_forward" "$type" "$spec" "$host"; fi
-                out_result=1
+                out_result="refresh"
             fi ;;
-        "$KEY_ESC"|"q"|"Q") out_result=2 ;; # Exit view
+        "$KEY_ESC"|"q"|"Q") out_result="exit" ;; # Exit view
     esac
 }
 
@@ -2649,23 +2665,31 @@ _server_view_refresh() {
 _server_view_key_handler() {
     local key="$1"
     local selected_host="$2"
-    # local selected_index="$3" # Available but not needed for this view
-    local -n out_result="$4"
+    # local selected_index="$3" # Unused before move
+    local -n current_option_ref="$4"
+    local num_options="$5"
+    local -n out_result="$6"
 
-    out_result=0 # Default to no-op
+    out_result="noop"
     case "$key" in
+        "$KEY_UP"|"k")
+            if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref - 1 + num_options) % num_options )); fi
+            ;;
+        "$KEY_DOWN"|"j")
+            if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref + 1) % num_options )); fi
+            ;;
         "$KEY_ENTER")
             if [[ -n "$selected_host" ]] && prompt_yes_no "Connect to '${selected_host}'?" "y"; then
                 clear; exec ssh "$selected_host"
             fi ;;
-        'a'|'A') run_menu_action "add_ssh_host"; out_result=1 ;;
-        'e') if [[ -n "$selected_host" ]]; then run_menu_action "edit_ssh_host" "$selected_host"; out_result=1; fi ;;
-        'E') if [[ -n "$selected_host" ]]; then run_menu_action "edit_ssh_host_in_editor" "$selected_host"; out_result=1; fi ;;
-        'd'|'D') if [[ -n "$selected_host" ]]; then run_menu_action "remove_ssh_host" "$selected_host"; out_result=1; fi ;;
-        'c'|'C') if [[ -n "$selected_host" ]]; then run_menu_action "clone_ssh_host" "$selected_host"; out_result=1; fi ;;
+        'a'|'A') run_menu_action "add_ssh_host"; out_result="refresh" ;;
+        'e') if [[ -n "$selected_host" ]]; then run_menu_action "edit_ssh_host" "$selected_host"; out_result="refresh"; fi ;;
+        'E') if [[ -n "$selected_host" ]]; then run_menu_action "edit_ssh_host_in_editor" "$selected_host"; out_result="refresh"; fi ;;
+        'd'|'D') if [[ -n "$selected_host" ]]; then run_menu_action "remove_ssh_host" "$selected_host"; out_result="refresh"; fi ;;
+        'c'|'C') if [[ -n "$selected_host" ]]; then run_menu_action "clone_ssh_host" "$selected_host"; out_result="refresh"; fi ;;
         't') if [[ -n "$selected_host" ]]; then clear; printBanner "Test SSH Connection"; _test_connection_for_host "$selected_host"; prompt_to_continue; fi ;;
         'T') run_menu_action "test_all_ssh_connections" ;;
-        "$KEY_ESC"|"q"|"Q") out_result=2 ;; # Exit view
+        "$KEY_ESC"|"q"|"Q") out_result="exit" ;; # Exit view
     esac
 }
 
@@ -2730,22 +2754,30 @@ _key_view_refresh() {
 _key_view_key_handler() {
     local key="$1"
     local selected_key_path="$2"
-    # local selected_index="$3" # Unused
-    local -n out_result="$4"
+    # local selected_index="$3" # Unused before move
+    local -n current_option_ref="$4"
+    local num_options="$5"
+    local -n out_result="$6"
 
-    out_result=0 # Default to no-op
+    out_result="noop"
     case "$key" in
+        "$KEY_UP"|"k")
+            if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref - 1 + num_options) % num_options )); fi
+            ;;
+        "$KEY_DOWN"|"j")
+            if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref + 1) % num_options )); fi
+            ;;
         'g'|'G')
-            run_menu_action "generate_ssh_key"; out_result=1 ;;
+            run_menu_action "generate_ssh_key"; out_result="refresh" ;;
         'c'|'C')
             if [[ -n "$selected_key_path" ]]; then
                 if [[ -f "${selected_key_path}.pub" ]]; then run_menu_action "copy_selected_ssh_key" "${selected_key_path}.pub";
                 else printErrMsg "Public key for '${selected_key_path}' not found."; prompt_to_continue; fi
             fi ;;
         'd'|'D')
-            if [[ -n "$selected_key_path" ]]; then run_menu_action "delete_ssh_key" "$selected_key_path"; out_result=1; fi ;;
+            if [[ -n "$selected_key_path" ]]; then run_menu_action "delete_ssh_key" "$selected_key_path"; out_result="refresh"; fi ;;
         'r'|'R')
-            if [[ -n "$selected_key_path" ]]; then run_menu_action "rename_ssh_key" "$selected_key_path"; out_result=1; fi ;;
+            if [[ -n "$selected_key_path" ]]; then run_menu_action "rename_ssh_key" "$selected_key_path"; out_result="refresh"; fi ;;
         'v'|'V')
             if [[ -n "$selected_key_path" ]]; then
                 if [[ -f "${selected_key_path}.pub" ]]; then run_menu_action "view_public_key" "${selected_key_path}.pub";
@@ -2754,7 +2786,7 @@ _key_view_key_handler() {
         'p'|'P')
             if [[ -n "$selected_key_path" ]]; then run_menu_action "regenerate_public_key" "$selected_key_path"; fi ;;
         "$KEY_ESC"|"q"|"Q")
-            out_result=2 ;; # Exit view
+            out_result="exit" ;; # Exit view
     esac
 }
 
