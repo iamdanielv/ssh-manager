@@ -1392,12 +1392,12 @@ _prompt_for_identity_file_interactive() {
 # (Private) Draws the new interactive UI for editing a host.
 # Highlights any values that have changed from the original.
 _draw_interactive_edit_host_ui() {
-    local new_hostname="$1" new_user="$2" new_port="$3" new_identityfile="$4"
-    local original_hostname="$5" original_user="$6" original_port="$7" original_identityfile="$8"
+    local new_alias="$1" new_hostname="$2" new_user="$3" new_port="$4" new_identityfile="$5"
+    local original_alias="$6" original_hostname="$7" original_user="$8" original_port="$9" original_identityfile="${10}"
 
     # Helper to format a line, adding a change indicator if needed.
     _format_edit_line() {
-        local key="$1" label="$2" new_val="$3" original_val="$4"
+        local key="$1" label="$2" new_val="$3" original_val="$4" is_alias="${5:-false}"
 
         local display_val="${new_val}"
         if [[ "$label" == "IdentityFile" ]]; then
@@ -1411,20 +1411,26 @@ _draw_interactive_edit_host_ui() {
         fi
 
         local change_indicator=" "
-        local expanded_new_val="${new_val/#\~/$HOME}"
-        local expanded_orig_val="${original_val/#\~/$HOME}"
-        if [[ "$expanded_new_val" != "$expanded_orig_val" ]]; then
-            change_indicator="${C_L_YELLOW}*${T_RESET}"
+        if [[ "$is_alias" == "true" ]]; then
+            if [[ "$new_val" != "$original_val" ]]; then
+                change_indicator="${C_L_YELLOW}*${T_RESET}"
+            fi
+        else
+            local expanded_new_val="${new_val/#\~/$HOME}"
+            if [[ "$expanded_new_val" != "${original_val/#\~/$HOME}" ]]; then
+                change_indicator="${C_L_YELLOW}*${T_RESET}"
+            fi
         fi
 
         printf " ${C_L_WHITE}%s)${T_RESET} %b %-15s: %b\n" "$key" "$change_indicator" "$label" "$display_val"
     }
 
     printMsg "Choose an option to configure:"
-    _format_edit_line "1" "HostName" "$new_hostname" "$original_hostname"
-    _format_edit_line "2" "User" "$new_user" "$original_user"
-    _format_edit_line "3" "Port" "$new_port" "$original_port"
-    _format_edit_line "4" "IdentityFile" "$new_identityfile" "$original_identityfile"
+    _format_edit_line "1" "Host (Alias)" "$new_alias" "$original_alias" "true"
+    _format_edit_line "2" "HostName" "$new_hostname" "$original_hostname"
+    _format_edit_line "3" "User" "$new_user" "$original_user"
+    _format_edit_line "4" "Port" "$new_port" "$original_port"
+    _format_edit_line "5" "IdentityFile" "$new_identityfile" "$original_identityfile"
 
     echo
     printMsg " ${C_L_WHITE}c) ${C_L_YELLOW}(C)ancel/(D)iscard${T_RESET} all pending changes"
@@ -1438,44 +1444,49 @@ _draw_interactive_edit_host_ui() {
 edit_ssh_host() {
     printBanner "Edit SSH Host"
 
-    local host_to_edit="$1"
-    if [[ -z "$host_to_edit" ]]; then
-        host_to_edit=$(select_ssh_host "Select a host to edit:")
+    local original_alias="$1"
+    if [[ -z "$original_alias" ]]; then
+        original_alias=$(select_ssh_host "Select a host to edit:")
         [[ $? -ne 0 ]] && return
     fi
 
     # Get original values to compare against for changes.
     local original_hostname original_user original_port original_identityfile
-    local details; details=$(_get_all_ssh_config_values_as_string "$host_to_edit")
+    local details; details=$(_get_all_ssh_config_values_as_string "$original_alias")
     # Use parameter expansion to rename the 'current_*' variables from the helper to 'original_*'.
     eval "${details//current/original}" # Sets original_hostname, original_user, original_port
-    original_identityfile=$(_get_explicit_ssh_config_value "$host_to_edit" "IdentityFile")
+    original_identityfile=$(_get_explicit_ssh_config_value "$original_alias" "IdentityFile")
     [[ -z "$original_port" ]] && original_port="22"
 
     # These variables will hold the values as they are being edited.
-    local new_hostname="$original_hostname" new_user="$original_user" new_port="$original_port" new_identityfile="$original_identityfile"
+    local new_alias="$original_alias" new_hostname="$original_hostname" new_user="$original_user" new_port="$original_port" new_identityfile="$original_identityfile"
 
     while true; do
         clear
-        printBanner "Edit SSH Host - ${C_L_CYAN}${host_to_edit}${C_BLUE}"
-        _draw_interactive_edit_host_ui "$new_hostname" "$new_user" "$new_port" "$new_identityfile" \
-                                       "$original_hostname" "$original_user" "$original_port" "$original_identityfile"
+        printBanner "Edit SSH Host - ${C_L_CYAN}${original_alias}${C_BLUE}"
+        _draw_interactive_edit_host_ui "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile" \
+                                       "$original_alias" "$original_hostname" "$original_user" "$original_port" "$original_identityfile"
 
         local key; key=$(read_single_char)
 
         case "$key" in
-            '1') prompt_for_input "HostName" new_hostname "$new_hostname" ;;
-            '2') prompt_for_input "User" new_user "$new_user" ;;
-            '3') prompt_for_input "Port" new_port "$new_port" ;;
-            '4')
+            '1')
+                # The old alias is both the one to allow (as a no-op) and the default value for the prompt.
+                _prompt_for_unique_host_alias new_alias "Enter the new alias for the host" "$original_alias" "$new_alias"
+                ;;
+            '2') prompt_for_input "HostName" new_hostname "$new_hostname" ;;
+            '3') prompt_for_input "User" new_user "$new_user" ;;
+            '4') prompt_for_input "Port" new_port "$new_port" ;;
+            '5')
                 clear_current_line
                 # This function is already a menu, so it fits perfectly.
-                _prompt_for_identity_file_interactive new_identityfile "$new_identityfile" "$host_to_edit" "$new_user" "$new_hostname"
+                _prompt_for_identity_file_interactive new_identityfile "$new_identityfile" "$new_alias" "$new_user" "$new_hostname"
                 ;;
             'c'|'C'|'d'|'D')
                 # Discard changes
                 clear_current_line
                 if prompt_yes_no "Discard all pending changes?" "y"; then
+                    new_alias="$original_alias"
                     new_hostname="$original_hostname"
                     new_user="$original_user"
                     new_port="$original_port"
@@ -1490,7 +1501,8 @@ edit_ssh_host() {
                 local expanded_new_idfile="${new_identityfile/#\~/$HOME}"
                 local expanded_orig_idfile="${original_identityfile/#\~/$HOME}"
 
-                if [[ "$new_hostname" == "$original_hostname" && \
+                if [[ "$new_alias" == "$original_alias" && \
+                      "$new_hostname" == "$original_hostname" && \
                       "$new_user" == "$original_user" && \
                       "$new_port" == "$original_port" && \
                       "$expanded_new_idfile" == "$expanded_orig_idfile" ]]; then
@@ -1500,13 +1512,53 @@ edit_ssh_host() {
                     break # Exit loop
                 fi
 
+                # --- Key File Renaming Logic (if alias changed) ---
+                if [[ "$new_alias" != "$original_alias" && -n "$new_identityfile" ]]; then
+                    local expanded_old_key_path="${new_identityfile/#\~/$HOME}"
+                    if [[ -f "$expanded_old_key_path" ]]; then
+                        local -a hosts_sharing_key=()
+                        mapfile -t all_hosts < <(get_ssh_hosts)
+                        for other_host in "${all_hosts[@]}"; do
+                            if [[ "$other_host" != "$original_alias" ]]; then
+                                local other_host_key; other_host_key=$(_get_explicit_ssh_config_value "$other_host" "IdentityFile")
+                                if [[ "$other_host_key" == "$new_identityfile" ]]; then hosts_sharing_key+=("$other_host"); fi
+                            fi
+                        done
+
+                        local proposed_new_key_path="${SSH_DIR}/${new_alias}_id_ed25519"
+                        if [[ ${#hosts_sharing_key[@]} -gt 0 ]]; then
+                            # Key is shared. Offer to COPY it to a new dedicated key.
+                            local question="The key '${new_identityfile}' is shared by other hosts.\n    Do you want to create a dedicated COPY of this key for '${new_alias}'?\n    New key path: ${C_L_BLUE}${proposed_new_key_path}${T_RESET}"
+                            if prompt_yes_no "$question" "y"; then
+                                if [[ -f "$proposed_new_key_path" || -f "${proposed_new_key_path}.pub" ]]; then
+                                    printErrMsg "Cannot create key copy: target file '${proposed_new_key_path}' or its .pub already exists."
+                                elif run_with_spinner "Copying key files..." _copy_key_pair "$expanded_old_key_path" "$proposed_new_key_path"; then
+                                    new_identityfile="$proposed_new_key_path" # Update the identity file to the new path
+                                else
+                                    printErrMsg "Failed to copy key files. The host was not changed."; sleep 2; continue
+                                fi
+                            fi
+                        elif [[ "$expanded_old_key_path" != "$proposed_new_key_path" ]]; then
+                            # Key is not shared. Offer to RENAME it.
+                            local question="This host uses the key:\n    ${C_L_BLUE}${new_identityfile/#\~/$HOME}${T_RESET}\nDo you want to rename this key to match the new host alias?\n    New name: ${C_L_BLUE}${proposed_new_key_path}${T_RESET}"
+                            if prompt_yes_no "$question" "y"; then
+                                if [[ -f "$proposed_new_key_path" || -f "${proposed_new_key_path}.pub" ]]; then
+                                    printErrMsg "Cannot rename key: target file '${proposed_new_key_path}' or its .pub already exists."
+                                elif run_with_spinner "Renaming key files..." _rename_key_pair "$expanded_old_key_path" "$proposed_new_key_path"; then
+                                    new_identityfile="$proposed_new_key_path" # Update the identity file to the new path
+                                else
+                                    printErrMsg "Failed to rename key files. The host was not changed."; sleep 2; continue
+                                fi
+                            fi
+                        fi
+                    fi
+                fi
+
                 # Save logic
-                local config_without_host
-                config_without_host=$(_remove_host_block_from_config "$host_to_edit")
-                local new_host_block
-                new_host_block=$(_build_host_block_string "$host_to_edit" "$new_hostname" "$new_user" "$new_port" "$new_identityfile")
+                local config_without_host; config_without_host=$(_remove_host_block_from_config "$original_alias")
+                local new_host_block; new_host_block=$(_build_host_block_string "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile")
                 echo -e "${config_without_host}\n\n${new_host_block}" | cat -s > "$SSH_CONFIG_PATH"
-                printOkMsg "Host '${host_to_edit}' has been updated."
+                printOkMsg "Host '${original_alias}' has been updated to '${new_alias}'."
 
                 # Cleanup
                 if [[ -n "$original_identityfile" && "$expanded_new_idfile" != "$expanded_orig_idfile" ]]; then
@@ -1518,7 +1570,8 @@ edit_ssh_host() {
                 # Quit
                 local expanded_new_idfile="${new_identityfile/#\~/$HOME}"
                 local expanded_orig_idfile="${original_identityfile/#\~/$HOME}"
-                if [[ "$new_hostname" != "$original_hostname" || \
+                if [[ "$new_alias" != "$original_alias" || \
+                      "$new_hostname" != "$original_hostname" || \
                       "$new_user" != "$original_user" || \
                       "$new_port" != "$original_port" || \
                       "$expanded_new_idfile" != "$expanded_orig_idfile" ]]; then
@@ -1804,89 +1857,6 @@ reorder_ssh_hosts() {
         printErrMsg "Failed to re-order hosts. Your original config is safe."
         printInfoMsg "The backup of your config is available at: ${backup_file}"
     fi
-}
-
-# Renames an SSH host alias and optionally its associated key file.
-rename_ssh_host() {
-    printBanner "Rename SSH Host Alias"
-
-    local host_to_rename="$1"
-    if [[ -z "$host_to_rename" ]]; then
-        host_to_rename=$(select_ssh_host "Select a host to rename:")
-        [[ $? -ne 0 ]] && return # select_ssh_host prints messages
-    fi
-
-    local new_alias
-    # The old alias is both the one to allow (as a no-op) and the default value for the prompt.
-    _prompt_for_unique_host_alias new_alias "Enter the new alias for '${host_to_rename}'" "$host_to_rename" "$host_to_rename" || return
-
-    if [[ "$new_alias" == "$host_to_rename" ]]; then
-        printInfoMsg "The new alias is the same as the old one. No changes made."
-        return
-    fi
-
-    # --- Config Block Modification ---
-    local original_block
-    original_block=$(_get_host_block_from_config "$host_to_rename" "$SSH_CONFIG_PATH")
-    if [[ -z "$original_block" ]]; then
-        printErrMsg "Could not find configuration block for '${host_to_rename}'."
-        return 1
-    fi
-
-    # Create a new block with the 'Host' line updated.
-    local new_block
-    new_block=$(printf '%s' "$original_block" | sed -E "s/^[[:space:]]*[Hh]ost[[:space:]].*/Host ${new_alias}/")
-
-    # --- Key File Renaming Logic ---
-    local current_identity_file; current_identity_file=$(_get_explicit_ssh_config_value "$host_to_rename" "IdentityFile")
-    if [[ -n "$current_identity_file" ]]; then
-        local expanded_old_key_path="${current_identity_file/#\~/$HOME}"
-        if [[ -f "$expanded_old_key_path" ]]; then
-            # Check if the key is used by any other hosts.
-            local -a hosts_sharing_key
-            mapfile -t all_hosts < <(get_ssh_hosts)
-            for other_host in "${all_hosts[@]}"; do
-                if [[ "$other_host" != "$host_to_rename" ]]; then
-                    local other_host_key; other_host_key=$(_get_explicit_ssh_config_value "$other_host" "IdentityFile")
-                    if [[ "$other_host_key" == "$current_identity_file" ]]; then
-                        hosts_sharing_key+=("$other_host")
-                    fi
-                fi
-            done
-
-            local proposed_new_key_path="${SSH_DIR}/${new_alias}_id_ed25519"
-            if [[ ${#hosts_sharing_key[@]} -gt 0 ]]; then
-                # Key is shared. Offer to COPY it to a new dedicated key.
-                local question="The key '${current_identity_file}' is shared by other hosts.\n    Do you want to create a dedicated COPY of this key for '${new_alias}'?\n    New key path: ${C_L_BLUE}${proposed_new_key_path}${T_RESET}"
-                if prompt_yes_no "$question" "y"; then
-                    if [[ -f "$proposed_new_key_path" || -f "${proposed_new_key_path}.pub" ]]; then
-                        printErrMsg "Cannot create key copy: target file '${proposed_new_key_path}' or its .pub already exists."
-                    elif run_with_spinner "Copying key files..." _copy_key_pair "$expanded_old_key_path" "$proposed_new_key_path"; then
-                        new_block=$(printf '%s' "$new_block" | sed -E "s|([[:space:]]*IdentityFile[[:space:]]+).*|\1${proposed_new_key_path}|")
-                    else
-                        printErrMsg "Failed to copy key files. The host alias was not changed."; return 1
-                    fi
-                fi
-            elif [[ "$expanded_old_key_path" != "$proposed_new_key_path" ]]; then
-                # Key is not shared. Offer to RENAME it.
-                local question="This host uses the key:\n    ${C_L_BLUE}${current_identity_file/#\~/$HOME}${T_RESET}\nDo you want to rename this key to match the new host alias?\n    New name: ${C_L_BLUE}${proposed_new_key_path}${T_RESET}"
-                if prompt_yes_no "$question" "y"; then
-                    if [[ -f "$proposed_new_key_path" || -f "${proposed_new_key_path}.pub" ]]; then
-                        printErrMsg "Cannot rename key: target file '${proposed_new_key_path}' or its .pub already exists."
-                    elif run_with_spinner "Renaming key files..." _rename_key_pair "$expanded_old_key_path" "$proposed_new_key_path"; then
-                        new_block=$(printf '%s' "$new_block" | sed -E "s|([[:space:]]*IdentityFile[[:space:]]+).*|\1${proposed_new_key_path}|")
-                    else
-                        printErrMsg "Failed to rename key files. The host alias was not changed."; return 1
-                    fi
-                fi
-            fi
-        fi
-    fi
-
-    # --- Finalize Config Update ---
-    local config_without_host; config_without_host=$(_remove_host_block_from_config "$host_to_rename")
-    echo -e "${config_without_host}\n\n${new_block}" | cat -s > "$SSH_CONFIG_PATH"
-    printOkMsg "Host '${host_to_rename}' successfully renamed to '${new_alias}'."
 }
 
 # (Private) Helper function to rename both private and public key files.
@@ -2778,7 +2748,7 @@ _server_view_draw_header() {
 
 _server_view_draw_footer() {
     printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC${T_RESET} Back"
-    printMsg "  ${T_BOLD}Host Actions:${T_RESET} ${C_L_GREEN}(A)dd${T_RESET} | ${C_L_RED}(D)elete${T_RESET} | (${C_L_CYAN}R${T_RESET})ename | (${C_L_CYAN}C${T_RESET})lone"
+    printMsg "  ${T_BOLD}Host Actions:${T_RESET} ${C_L_GREEN}(A)dd${T_RESET} | ${C_L_RED}(D)elete${T_RESET} | (${C_L_CYAN}C${T_RESET})lone"
     printMsg "  ${T_BOLD}Host Edit:${T_RESET}    (${C_L_CYAN}e${T_RESET})dit - wizard | (${C_L_CYAN}E${T_RESET})dit - advanced"
     printMsg "  ${T_BOLD}Connection:${T_RESET}   ${C_L_YELLOW}ENTER${T_RESET} Connect | (${C_L_CYAN}t${T_RESET})est selected | (${C_L_CYAN}T${T_RESET})est all"
 }
@@ -2808,7 +2778,6 @@ _server_view_key_handler() {
         'e') if [[ -n "$selected_host" ]]; then run_menu_action "edit_ssh_host" "$selected_host"; out_result=1; fi ;;
         'E') if [[ -n "$selected_host" ]]; then run_menu_action "edit_ssh_host_in_editor" "$selected_host"; out_result=1; fi ;;
         'd'|'D') if [[ -n "$selected_host" ]]; then run_menu_action "remove_ssh_host" "$selected_host"; out_result=1; fi ;;
-        'r'|'R') if [[ -n "$selected_host" ]]; then run_menu_action "rename_ssh_host" "$selected_host"; out_result=1; fi ;;
         'c'|'C') if [[ -n "$selected_host" ]]; then run_menu_action "clone_ssh_host" "$selected_host"; out_result=1; fi ;;
         't') if [[ -n "$selected_host" ]]; then clear; printBanner "Test SSH Connection"; _test_connection_for_host "$selected_host"; prompt_to_continue; fi ;;
         'T') run_menu_action "test_all_ssh_connections" ;;
