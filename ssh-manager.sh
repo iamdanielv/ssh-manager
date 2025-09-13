@@ -1896,106 +1896,98 @@ test_all_ssh_connections() {
     fi
 }
 
-# Sets up a local port forward (ssh -L).
-setup_local_port_forward() {
-    printBanner "Setup Local Port Forward (ssh -L)"
+# (Private) Generic worker for creating or cloning port forwards.
+# Consolidates the logic from setup_local/remote_port_forward and clone_port_forward.
+# Usage: _create_or_clone_port_forward <mode> <type> <host> [spec_to_clone]
+#   mode: 'create' or 'clone'
+#   type: 'Local' or 'Remote'
+#   host: The SSH host alias
+#   spec_to_clone: The spec string (e.g., "8080:localhost:80") for cloning
+_create_or_clone_port_forward() {
+    local mode="$1" type="$2" host="$3" spec_to_clone="${4:-}"
 
-    local selected_host
-    selected_host=$(select_ssh_host "Select a host for the port forward:" "false")
-    [[ $? -ne 0 ]] && return
+    local flag p1_prompt p1_default h_prompt h_default p2_prompt p2_default explanation_tpl notes=""
+    if [[ "$type" == "Local" ]]; then
+        flag="-L"
+        p1_prompt="Enter the LOCAL port to listen on"
+        h_prompt="Enter the REMOTE host to connect to (from ${host})"
+        p2_prompt="Enter the REMOTE port to connect to"
+        explanation_tpl="This will forward local port %s to %s on the remote network."
+        p1_default="8080"; h_default="localhost"; p2_default="80"
+    else # Remote
+        flag="-R"
+        p1_prompt="Enter the REMOTE port to listen on (on ${host})"
+        h_prompt="Enter the LOCAL host to connect to"
+        p2_prompt="Enter the LOCAL port to connect to"
+        explanation_tpl="This will forward remote port %s on ${host} to %s on your local machine."
+        notes="Ensure 'GatewayPorts' is enabled in the server's sshd_config for remote forwards to be accessible externally."
+        p1_default="8080"; h_default="localhost"; p2_default="80"
+    fi
 
-    local local_port="8080" remote_host="localhost" remote_port="80"
+    local banner_title="Setup ${type} Port Forward (ssh ${flag})"
+    if [[ "$mode" == "clone" ]]; then
+        banner_title="Clone Port Forward"
+        local old_p1="${spec_to_clone%%:*}"
+        local remote_part="${spec_to_clone#*:}"
+        p1_default=$((old_p1 + 1))
+        h_default="${remote_part%:*}"
+        p2_default="${remote_part##*:}"
+    fi
 
+    local p1_val="$p1_default" h_val="$h_default" p2_val="$p2_default"
     while true; do
         clear
-        printBanner "Setup Local Port Forward (ssh -L)"
-        printInfoMsg "Selected host: ${C_L_CYAN}${selected_host}${T_RESET}"
+        printBanner "$banner_title"
+        if [[ "$mode" == "clone" ]]; then
+            printInfoMsg "Cloning forward: ${C_L_CYAN}${spec_to_clone}${T_RESET} (${type}) on host ${C_L_CYAN}${host}${T_RESET}"
+        else
+            printInfoMsg "Selected host: ${C_L_CYAN}${host}${T_RESET}"
+        fi
 
-        prompt_for_input "Enter the LOCAL port to listen on" local_port "$local_port" || return
-        prompt_for_input "Enter the REMOTE host to connect to (from ${selected_host})" remote_host "$remote_host" || return
-        prompt_for_input "Enter the REMOTE port to connect to" remote_port "$remote_port" || return
+        prompt_for_input "$p1_prompt" p1_val "$p1_val" || return
+        prompt_for_input "$h_prompt" h_val "$h_val" || return
+        prompt_for_input "$p2_prompt" p2_val "$p2_val" || return
 
-        local forward_spec="${local_port}:${remote_host}:${remote_port}"
-        local -a cmd_array=("ssh" "-o" "ExitOnForwardFailure=yes" "-N" "-f" "-L" "${forward_spec}" "${selected_host}")
-        local explanation="This will forward local port ${C_L_CYAN}${local_port}${T_RESET} to ${C_L_CYAN}${remote_host}:${remote_port}${T_RESET} on the remote network."
+        local new_spec="${p1_val}:${h_val}:${p2_val}"
+        local -a cmd_array=("ssh" "-o" "ExitOnForwardFailure=yes" "-N" "-f" "${flag}" "${new_spec}" "${host}")
+        local explanation; printf -v explanation "$explanation_tpl" "${C_L_CYAN}${p1_val}${T_RESET}" "${C_L_CYAN}${h_val}:${p2_val}${T_RESET}"
 
         clear
-        printBanner "Setup Local Port Forward (ssh -L)"
+        printBanner "$banner_title"
         printInfoMsg "$explanation"
+        if [[ -n "$notes" ]]; then printWarnMsg "$notes"; fi
         printMsg "\n${T_ULINE}Command to be run in the background:${T_RESET}"
         printMsg "  ${C_L_BLUE}${cmd_array[*]}${T_RESET}"
         printMsg "\n${C_GRAY}The -N flag prevents executing a remote command, and -f runs it in the background.${T_RESET}"
 
-        if ! prompt_yes_no "Proceed with creating the port forward?" "y"; then
-            printInfoMsg "Operation cancelled."
-            return
-        fi
+        if ! prompt_yes_no "Proceed with creating the port forward?" "y"; then printInfoMsg "Operation cancelled."; return; fi
 
         if run_with_spinner "Establishing port forward..." "${cmd_array[@]}"; then
-            printInfoMsg "You can manage this forward using the 'Port Forwarding' menu."
-            return 0
+            printInfoMsg "You can manage this forward using the 'Port Forwarding' menu."; return 0
         else
-            if prompt_yes_no "Would you like to modify the settings and try again?" "y"; then
-                continue
-            else
-                printInfoMsg "Operation cancelled."
-                return 1
+            if ! prompt_yes_no "Would you like to modify the settings and try again?" "y"; then
+                printInfoMsg "Operation cancelled."; return 1
             fi
         fi
     done
 }
 
+# Sets up a local port forward (ssh -L).
+setup_local_port_forward() {
+    local selected_host
+    selected_host=$(select_ssh_host "Select a host for the port forward:" "false")
+    [[ $? -ne 0 ]] && return
+
+    _create_or_clone_port_forward "create" "Local" "$selected_host"
+}
+
 # Sets up a remote port forward (ssh -R).
 setup_remote_port_forward() {
-    printBanner "Setup Remote Port Forward (ssh -R)"
-
     local selected_host
     selected_host=$(select_ssh_host "Select a host to open a port on:" "false")
     [[ $? -ne 0 ]] && return
 
-    local remote_port="8080" remote_host="localhost" local_port="80"
-
-    while true; do
-        clear
-        printBanner "Setup Remote Port Forward (ssh -R)"
-        printInfoMsg "Selected host: ${C_L_CYAN}${selected_host}${T_RESET}"
-
-        prompt_for_input "Enter the REMOTE port to listen on (on ${selected_host})" remote_port "$remote_port" || return
-        prompt_for_input "Enter the LOCAL host to connect to" remote_host "$remote_host" || return
-        prompt_for_input "Enter the LOCAL port to connect to" local_port "$local_port" || return
-
-        local forward_spec="${remote_port}:${remote_host}:${local_port}"
-        local -a cmd_array=("ssh" "-o" "ExitOnForwardFailure=yes" "-N" "-f" "-R" "${forward_spec}" "${selected_host}")
-        local explanation="This will forward remote port ${C_L_CYAN}${remote_port}${T_RESET} on ${selected_host} to ${C_L_CYAN}${remote_host}:${local_port}${T_RESET} on your local machine."
-        local notes="Ensure 'GatewayPorts' is enabled in the server's sshd_config for remote forwards to be accessible externally."
-
-        clear
-        printBanner "Setup Remote Port Forward (ssh -R)"
-        printInfoMsg "$explanation"
-        if [[ -n "$notes" ]]; then
-            printWarnMsg "$notes"
-        fi
-        printMsg "\n${T_ULINE}Command to be run in the background:${T_RESET}"
-        printMsg "  ${C_L_BLUE}${cmd_array[*]}${T_RESET}"
-        printMsg "\n${C_GRAY}The -N flag prevents executing a remote command, and -f runs it in the background.${T_RESET}"
-
-        if ! prompt_yes_no "Proceed with creating the port forward?" "y"; then
-            printInfoMsg "Operation cancelled."
-            return
-        fi
-
-        if run_with_spinner "Establishing port forward..." "${cmd_array[@]}"; then
-            printInfoMsg "You can manage this forward using the 'Port Forwarding' menu."
-            return 0
-        else
-            if prompt_yes_no "Would you like to modify the settings and try again?" "y"; then
-                continue
-            else
-                printInfoMsg "Operation cancelled."
-                return 1
-            fi
-        fi
-    done
+    _create_or_clone_port_forward "create" "Remote" "$selected_host"
 }
 
 # Clones an existing port forward, prompting for a new port.
@@ -2003,75 +1995,7 @@ clone_port_forward() {
     local type="$1"
     local spec="$2"
     local host="$3"
-
-    local flag remote_part old_port new_port_prompt new_port dest_host dest_port
-
-    if [[ "$type" == "Local" ]]; then
-        flag="-L"
-        old_port="${spec%%:*}"
-        remote_part="${spec#*:}"
-        dest_host="${remote_part%:*}"
-        dest_port="${remote_part##*:}"
-        new_port_prompt="Enter the NEW LOCAL port to listen on"
-        new_port=$((old_port + 1))
-    elif [[ "$type" == "Remote" ]]; then
-        flag="-R"
-        old_port="${spec%%:*}"
-        remote_part="${spec#*:}"
-        dest_host="${remote_part%:*}"
-        dest_port="${remote_part##*:}"
-        new_port_prompt="Enter the NEW REMOTE port to listen on (on ${host})"
-        new_port=$((old_port + 1))
-    else
-        printErrMsg "Cannot clone forward of unknown type: ${type}"
-        return 1
-    fi
-
-    while true; do
-        clear
-        printBanner "Clone Port Forward"
-        printInfoMsg "Cloning forward: ${C_L_CYAN}${spec}${T_RESET} (${type}) on host ${C_L_CYAN}${host}${T_RESET}"
-
-        prompt_for_input "$new_port_prompt" new_port "$new_port" || return
-
-        if [[ "$type" == "Local" ]]; then
-            prompt_for_input "Enter the REMOTE host to connect to (from ${host})" dest_host "$dest_host" || return
-            prompt_for_input "Enter the REMOTE port to connect to" dest_port "$dest_port" || return
-        else # Remote
-            prompt_for_input "Enter the LOCAL host to connect to" dest_host "$dest_host" || return
-            prompt_for_input "Enter the LOCAL port to connect to" dest_port "$dest_port" || return
-        fi
-
-        local new_spec="${new_port}:${dest_host}:${dest_port}"
-        local -a cmd_array=("ssh" "-o" "ExitOnForwardFailure=yes" "-N" "-f" "${flag}" "${new_spec}" "${host}")
-        local explanation notes=""
-        if [[ "$type" == "Local" ]]; then
-            explanation="This will forward local port ${C_L_CYAN}${new_port}${T_RESET} to ${C_L_CYAN}${dest_host}:${dest_port}${T_RESET} on the remote network."
-        else
-            explanation="This will forward remote port ${C_L_CYAN}${new_port}${T_RESET} on ${host} to ${C_L_CYAN}${dest_host}:${dest_port}${T_RESET} on your local machine."
-            notes="Ensure 'GatewayPorts' is enabled in the server's sshd_config for remote forwards to be accessible externally."
-        fi
-
-        clear
-        printBanner "Clone Port Forward"
-        printInfoMsg "$explanation"
-        if [[ -n "$notes" ]]; then printWarnMsg "$notes"; fi
-        printMsg "\n${T_ULINE}Command to be run in the background:${T_RESET}"
-        printMsg "  ${C_L_BLUE}${cmd_array[*]}${T_RESET}"
-        printMsg "\n${C_GRAY}The -N flag prevents executing a remote command, and -f runs it in the background.${T_RESET}"
-
-        if ! prompt_yes_no "Proceed with creating the port forward?" "y"; then
-            printInfoMsg "Operation cancelled."; return; fi
-
-        if run_with_spinner "Establishing port forward..." "${cmd_array[@]}"; then
-            printInfoMsg "You can manage this forward using the 'Port Forwarding' menu."; return 0
-        else
-            if prompt_yes_no "Would you like to modify the settings and try again?" "y"; then
-                continue
-            else
-                printInfoMsg "Operation cancelled."; return 1; fi
-        fi
-    done
+    _create_or_clone_port_forward "clone" "$type" "$host" "$spec"
 }
 
 # (Private) Formats a line for displaying port forward information with colors.
