@@ -2454,140 +2454,93 @@ interactive_server_management_view() {
         "_server_view_draw_footer"
 }
 
+--- Key Management View Helpers ---
+
+_key_view_draw_header() {
+    local header; header=$(printf "   %-25s %-10s %-6s %s" "KEY FILENAME" "TYPE" "BITS" "COMMENT")
+    printMsg "  ${C_WHITE}${header}${T_RESET}"
+}
+
+_key_view_draw_footer() {
+    printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC${T_RESET} Back"
+    printMsg "  ${T_BOLD}Key Actions:${T_RESET}  (${C_L_GREEN}G${T_RESET})enerate | (${C_L_RED}D${T_RESET})elete | (${C_L_CYAN}R${T_RESET})ename"
+    printMsg "                (${C_L_CYAN}V${T_RESET})iew public | (${C_L_CYAN}C${T_RESET})opy | Re-gen (${C_L_CYAN}P${T_RESET})ublic"
+}
+
+# (Private) Verifies a file is a valid private key and extracts its details.
+_get_key_details() {
+    local key_file="$1"
+    local details
+    # Heuristic: A file whose first line looks like a public key is not a private key.
+    if head -n 1 "$key_file" 2>/dev/null | grep -q -E '^(ssh-(rsa|dss|ed25519)|ecdsa-sha2-nistp(256|384|521)) '; then return 1; fi
+    # Attempt to get the key fingerprint. If this fails, it's not a valid key file.
+    details=$(ssh-keygen -l -f "$key_file" 2>/dev/null)
+    if [[ -z "$details" || $(echo "$details" | wc -l) -ne 1 ]]; then return 1; fi
+    local bits; bits=$(echo "$details" | awk '{print $1}')
+    local type; type=$(echo "$details" | awk '{print $NF}' | tr -d '()')
+    local comment; comment=$(echo "$details" | awk '{for(i=3;i<NF;i++) printf "%s ",$i}' | sed 's/ $//')
+    [[ -z "$comment" ]] && comment="(no comment)"
+    echo "$type $bits $comment"
+}
+
+_key_view_refresh() {
+    local -n out_menu_options="$1"
+    local -n out_data_payloads="$2"
+    out_data_payloads=()
+    out_menu_options=()
+    # Find all files in SSH_DIR that do NOT end in .pub, then verify they are valid private keys.
+    while IFS= read -r key_path; do
+        local details_str
+        if details_str=$(_get_key_details "$key_path"); then
+            out_data_payloads+=("$key_path")
+            local filename; filename=$(basename "$key_path")
+            local key_type key_bits key_comment
+            read -r key_type key_bits key_comment <<< "$details_str"
+            local formatted_string
+            formatted_string=$(printf "%-25s %-10s %-6s %s" "${filename}" "${key_type}" "${key_bits}" "${key_comment}")
+            out_menu_options+=("$formatted_string")
+        fi
+    done < <(find "$SSH_DIR" -maxdepth 1 -type f ! -name "*.pub")
+}
+
+_key_view_key_handler() {
+    local key="$1"
+    local selected_key_path="$2"
+    # local selected_index="$3" # Unused
+    local -n out_result="$4"
+
+    out_result=0 # Default to no-op
+    case "$key" in
+        'g'|'G')
+            run_menu_action "generate_ssh_key"; out_result=1 ;;
+        'c'|'C')
+            if [[ -n "$selected_key_path" ]]; then
+                if [[ -f "${selected_key_path}.pub" ]]; then run_menu_action "copy_selected_ssh_key" "${selected_key_path}.pub";
+                else printErrMsg "Public key for '${selected_key_path}' not found."; prompt_to_continue; fi
+            fi ;;
+        'd'|'D')
+            if [[ -n "$selected_key_path" ]]; then run_menu_action "delete_ssh_key" "$selected_key_path"; out_result=1; fi ;;
+        'r'|'R')
+            if [[ -n "$selected_key_path" ]]; then run_menu_action "rename_ssh_key" "$selected_key_path"; out_result=1; fi ;;
+        'v'|'V')
+            if [[ -n "$selected_key_path" ]]; then
+                if [[ -f "${selected_key_path}.pub" ]]; then run_menu_action "view_public_key" "${selected_key_path}.pub";
+                else printErrMsg "Public key for '${selected_key_path}' not found."; prompt_to_continue; fi
+            fi ;;
+        'p'|'P')
+            if [[ -n "$selected_key_path" ]]; then run_menu_action "regenerate_public_key" "$selected_key_path"; fi ;;
+        "$KEY_ESC"|"q"|"Q")
+            out_result=2 ;; # Exit view
+    esac
+}
+
 interactive_key_management_view() {
-    # Hide cursor and ensure it is shown again when the function returns.
-    printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty
-    trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty' RETURN
-
-    local current_option=0
-    local -a key_paths=() menu_options=()
-    local num_options=0
-
-    _get_key_details() {
-        local key_file="$1"
-        local details
-
-        # Heuristic: A file whose first line looks like a public key is not a private key.
-        # This filters out files like 'authorized_keys' and stray '.pub' files.
-        # We use head -n 1 to only check the first line for performance.
-        if head -n 1 "$key_file" 2>/dev/null | grep -q -E '^(ssh-(rsa|dss|ed25519)|ecdsa-sha2-nistp(256|384|521)) '; then
-            return 1
-        fi
-
-        # Attempt to get the key fingerprint. If this fails, it's not a valid key file.
-        details=$(ssh-keygen -l -f "$key_file" 2>/dev/null)
-        # A valid private key will produce a single line of output.
-        # known_hosts produces multiple lines. Other files produce no output or errors.
-        if [[ -z "$details" || $(echo "$details" | wc -l) -ne 1 ]]; then
-            return 1 # Not a valid private key file.
-        fi
-        local bits; bits=$(echo "$details" | awk '{print $1}')
-        local type; type=$(echo "$details" | awk '{print $NF}' | tr -d '()')
-        local comment; comment=$(echo "$details" | awk '{for(i=3;i<NF;i++) printf "%s ",$i}' | sed 's/ $//')
-        [[ -z "$comment" ]] && comment="(no comment)"
-        echo "$type $bits $comment"
-    }
-
-    _refresh_key_list() {
-        key_paths=()
-        menu_options=()
-        # Find all files in SSH_DIR that do NOT end in .pub.
-        # Then, for each candidate, use ssh-keygen to verify it's a valid private key.
-        while IFS= read -r key_path; do
-            local details_str
-            # If _get_key_details succeeds, it's a valid key file.
-            if details_str=$(_get_key_details "$key_path"); then
-                key_paths+=("$key_path")
-
-                local filename; filename=$(basename "$key_path")
-                local key_type key_bits key_comment
-                read -r key_type key_bits key_comment <<< "$details_str"
-
-                local formatted_string
-                formatted_string=$(printf "%-25s %-10s %-6s %s" "${filename}" "${key_type}" "${key_bits}" "${key_comment}")
-                menu_options+=("$formatted_string")
-            fi
-        done < <(find "$SSH_DIR" -maxdepth 1 -type f ! -name "*.pub")
-
-        num_options=${#key_paths[@]}
-        if (( current_option >= num_options )); then current_option=$(( num_options - 1 )); fi
-        if (( current_option < 0 )); then current_option=0; fi
-    }
-
-    _draw_view() {
-        clear
-        printBanner "Key Management"
-        local header; header=$(printf " %-25s %-10s %-6s %s" "KEY FILENAME" "TYPE" "BITS" "COMMENT")
-        printMsg "  ${C_WHITE}${header}${T_RESET}"
-        printMsg "${C_GRAY}${DIV}${T_RESET}"
-
-        if [[ $num_options -gt 0 ]]; then
-            for i in "${!menu_options[@]}"; do
-                local pointer=" "; local highlight_start=""; local highlight_end=""
-                if (( i == current_option )); then
-                    pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"
-                    highlight_start="${T_REVERSE}"
-                    highlight_end="${T_RESET}"
-                fi
-                printMsg " ${pointer} ${highlight_start}${menu_options[i]}${highlight_end}${T_RESET}"
-            done
-        else
-            printMsg "  ${C_GRAY}(No keys found. Press 'g' to generate one.)${T_RESET}"
-        fi
-
-        printMsg "${C_GRAY}${DIV}${T_RESET}"
-        printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC${T_RESET} Back"
-        printMsg "  ${T_BOLD}Key Actions:${T_RESET}  (${C_L_GREEN}G${T_RESET})enerate | (${C_L_RED}D${T_RESET})elete | (${C_L_CYAN}R${T_RESET})ename"
-        printMsg "                (${C_L_CYAN}V${T_RESET})iew public | (${C_L_CYAN}C${T_RESET})opy | Re-gen (${C_L_CYAN}P${T_RESET})ublic"
-        printMsg "${C_GRAY}${DIV}${T_RESET}"
-    }
-
-    _refresh_key_list # Initial population of the key list.
-    while true; do
-        _draw_view
-
-        local key; key=$(read_single_char)
-        local selected_key_path=""
-        if (( num_options > 0 && current_option >= 0 )); then
-            selected_key_path="${key_paths[$current_option]}"
-        fi
-
-        case "$key" in
-            "$KEY_UP"|"k") if (( num_options > 0 )); then current_option=$(( (current_option - 1 + num_options) % num_options )); fi ;;
-            "$KEY_DOWN"|"j") if (( num_options > 0 )); then current_option=$(( (current_option + 1) % num_options )); fi ;;
-            'g'|'G')
-                run_menu_action "generate_ssh_key"
-                _refresh_key_list # The list of keys has changed.
-                ;;
-            'c'|'C')
-                if [[ -n "$selected_key_path" && -f "${selected_key_path}.pub" ]]; then
-                    run_menu_action "copy_selected_ssh_key" "${selected_key_path}.pub"
-                elif [[ -n "$selected_key_path" ]]; then
-                    printErrMsg "Public key for '${selected_key_path}' not found."; prompt_to_continue
-                fi ;;
-            'd'|'D')
-                if [[ -n "$selected_key_path" ]]; then
-                    run_menu_action "delete_ssh_key" "$selected_key_path"
-                    _refresh_key_list # The list of keys has changed.
-                fi ;;
-            'r'|'R')
-                if [[ -n "$selected_key_path" ]]; then
-                    run_menu_action "rename_ssh_key" "$selected_key_path"
-                    _refresh_key_list # The list of keys has changed.
-                fi ;;
-            'v'|'V')
-                if [[ -n "$selected_key_path" && -f "${selected_key_path}.pub" ]]; then
-                    run_menu_action "view_public_key" "${selected_key_path}.pub"
-                elif [[ -n "$selected_key_path" ]]; then
-                    printErrMsg "Public key for '${selected_key_path}' not found."; prompt_to_continue
-                fi ;;
-            'p'|'P')
-                if [[ -n "$selected_key_path" ]]; then
-                    run_menu_action "regenerate_public_key" "$selected_key_path"
-                fi ;;
-            "$KEY_ESC"|"q"|"Q") return 0 ;;
-        esac
-    done
+    _interactive_list_view \
+        "Key Management" \
+        "_key_view_draw_header" \
+        "_key_view_refresh" \
+        "_key_view_key_handler" \
+        "_key_view_draw_footer"
 }
 
 key_menu() {
