@@ -339,6 +339,82 @@ interactive_reorder_menu() {
         esac; _draw_reorder_menu >/dev/tty; done
 }
 
+# (Private) A generic, reusable interactive list view.
+# This function abstracts the common pattern of displaying a list of items,
+# handling navigation, and dispatching actions.
+#
+# Usage: _interactive_list_view <banner> <header_func> <refresh_func> <key_handler_func> <footer_func>
+#   - banner: The title string to display at the top.
+#   - header_func: The name of a function that prints the list's column headers.
+#   - refresh_func: The name of a function that populates the data arrays. It must accept two
+#                   nameref arguments: the first for the display strings, the second for raw data payloads.
+#   - key_handler_func: The name of a function to handle key presses. It receives the key, the selected
+#                       data payload, and the selected index. It must return:
+#                       0 = no-op, 1 = refresh list, 2 = exit view.
+#   - footer_func: The name of a function that prints the help text at the bottom.
+_interactive_list_view() {
+    local banner="$1"
+    local header_func="$2"
+    local refresh_func="$3"
+    local key_handler_func="$4"
+    local footer_func="$5"
+
+    printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty
+    trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty' RETURN
+
+    local current_option=0
+    local -a menu_options=()
+    local -a data_payloads=()
+    local num_options=0
+
+    # (Private) Fetches data and clamps the selection index.
+    _refresh_data() {
+        "$refresh_func" menu_options data_payloads
+        num_options=${#menu_options[@]}
+        if (( current_option >= num_options )); then current_option=$(( num_options - 1 )); fi
+        if (( current_option < 0 )); then current_option=0; fi
+    }
+
+    # (Private) Draws the entire UI.
+    _draw_view() {
+        clear
+        printBanner "$banner"
+        "$header_func"
+        printMsg "${C_GRAY}${DIV}${T_RESET}"
+
+        if [[ $num_options -gt 0 ]]; then
+            for i in "${!menu_options[@]}"; do
+                local pointer=" "; local highlight_start=""; local highlight_end=""
+                if (( i == current_option )); then
+                    pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"
+                    highlight_start="${T_REVERSE}"
+                    highlight_end="${T_RESET}"
+                fi
+                printMsg " ${pointer} ${highlight_start}${menu_options[i]}${highlight_end}"
+            done
+        else
+            printMsg "  ${C_GRAY}(No items found.)${T_RESET}"
+        fi
+
+        printMsg "${C_GRAY}${DIV}${T_RESET}"
+        "$footer_func"
+        printMsg "${C_GRAY}${DIV}${T_RESET}"
+    }
+
+    _refresh_data # Initial data load
+    while true; do
+        _draw_view
+        local key; key=$(read_single_char)
+        local selected_payload=""; if (( num_options > 0 )); then selected_payload="${data_payloads[$current_option]}"; fi
+        case "$key" in
+            "$KEY_UP"|"k") if (( num_options > 0 )); then current_option=$(( (current_option - 1 + num_options) % num_options )); fi;;
+            "$KEY_DOWN"|"j") if (( num_options > 0 )); then current_option=$(( (current_option + 1) % num_options )); fi;;
+            *) local handler_result; "$key_handler_func" "$key" "$selected_payload" "$current_option" handler_result
+               if [[ "$handler_result" -eq 1 ]]; then _refresh_data; elif [[ "$handler_result" -eq 2 ]]; then break; fi;;
+        esac
+    done
+}
+
 # --- Error Handling & Traps ---
 script_interrupt_handler() {
     trap - INT; clear; printMsg "${T_WARN_ICON} ${C_L_YELLOW}Operation cancelled by user.${T_RESET}"; exit 130; }
@@ -2322,128 +2398,60 @@ _run_submenu() {
     done
 }
 
+# --- Server Management View Helpers ---
+
+_server_view_draw_header() {
+    local header; header=$(printf "   %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "user@hostname[:port] (key)")
+    printMsg "${C_WHITE}${header}${T_RESET}"
+}
+
+_server_view_draw_footer() {
+    printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC${T_RESET} Back"
+    printMsg "  ${T_BOLD}Host Actions:${T_RESET} ${C_L_GREEN}(A)dd${T_RESET} | ${C_L_RED}(D)elete${T_RESET} | (${C_L_CYAN}R${T_RESET})ename | (${C_L_CYAN}C${T_RESET})lone"
+    printMsg "  ${T_BOLD}Host Edit:${T_RESET}    (${C_L_CYAN}e${T_RESET})dit - wizard | (${C_L_CYAN}E${T_RESET})dit - advanced"
+    printMsg "  ${T_BOLD}Connection:${T_RESET}   ${C_L_YELLOW}ENTER${T_RESET} Connect | (${C_L_CYAN}t${T_RESET})est selected | (${C_L_CYAN}T${T_RESET})est all"
+}
+
+_server_view_refresh() {
+    local -n out_menu_options="$1"
+    local -n out_data_payloads="$2"
+    # Get raw host names for the data payload
+    mapfile -t out_data_payloads < <(get_ssh_hosts)
+    # Get formatted strings for display
+    get_detailed_ssh_hosts_menu_options out_menu_options "true"
+}
+
+_server_view_key_handler() {
+    local key="$1"
+    local selected_host="$2"
+    # local selected_index="$3" # Available but not needed for this view
+    local -n out_result="$4"
+
+    out_result=0 # Default to no-op
+    case "$key" in
+        "$KEY_ENTER")
+            if [[ -n "$selected_host" ]] && prompt_yes_no "Connect to '${selected_host}'?" "y"; then
+                clear; exec ssh "$selected_host"
+            fi ;;
+        'a'|'A') run_menu_action "add_ssh_host"; out_result=1 ;;
+        'e') if [[ -n "$selected_host" ]]; then run_menu_action "edit_ssh_host" "$selected_host"; out_result=1; fi ;;
+        'E') if [[ -n "$selected_host" ]]; then run_menu_action "edit_ssh_host_in_editor" "$selected_host"; out_result=1; fi ;;
+        'd'|'D') if [[ -n "$selected_host" ]]; then run_menu_action "remove_ssh_host" "$selected_host"; out_result=1; fi ;;
+        'r'|'R') if [[ -n "$selected_host" ]]; then run_menu_action "rename_ssh_host" "$selected_host"; out_result=1; fi ;;
+        'c'|'C') if [[ -n "$selected_host" ]]; then run_menu_action "clone_ssh_host" "$selected_host"; out_result=1; fi ;;
+        't') if [[ -n "$selected_host" ]]; then clear; printBanner "Test SSH Connection"; _test_connection_for_host "$selected_host"; prompt_to_continue; fi ;;
+        'T') run_menu_action "test_all_ssh_connections" ;;
+        "$KEY_ESC"|"q"|"Q") out_result=2 ;; # Exit view
+    esac
+}
+
 interactive_server_management_view() {
-    # Hide cursor and ensure it is shown again when the function returns.
-    printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty
-    trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty' RETURN
-
-    local current_option=0
-    local -a hosts=()
-    local -a menu_options=()
-    local num_options=0
-
-    # (Private) Fetches hosts and formatted details, then clamps the selection index.
-    _refresh_host_list() {
-        mapfile -t hosts < <(get_ssh_hosts)
-        get_detailed_ssh_hosts_menu_options menu_options "true"
-        num_options=${#hosts[@]}
-
-        # Clamp current_option to be within bounds after a list change.
-        if (( current_option >= num_options )); then
-            current_option=$(( num_options - 1 ))
-        fi
-        if (( current_option < 0 )); then
-            current_option=0
-        fi
-    }
-
-    # (Private) Draws the main UI components.
-    _draw_view() {
-        clear
-        printBanner "Server/Host Management"
-        local header; header=$(printf "   %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "user@hostname[:port] (key)")
-        printMsg "${C_WHITE}${header}${T_RESET}"
-        printMsg "${C_GRAY}${DIV}${T_RESET}"
-
-        if [[ $num_options -gt 0 ]]; then
-            for i in "${!menu_options[@]}"; do
-                local pointer=" "
-                local highlight_start=""
-                local highlight_end=""
-                if (( i == current_option )); then
-                    pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"
-                    highlight_start="${T_REVERSE}"
-                    highlight_end="${T_RESET}"
-                fi
-                # The menu_options are already formatted with colors. We add the pointer and highlight.
-                printMsg " ${pointer} ${highlight_start}${menu_options[i]}${highlight_end}"
-            done
-        else
-            printMsg "  ${C_GRAY}(No hosts configured. Press 'a' to add one.)${T_RESET}"
-        fi
-
-        printMsg "${C_GRAY}${DIV}${T_RESET}"
-        printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC${T_RESET} Back"
-        printMsg "  ${T_BOLD}Host Actions:${T_RESET} ${C_L_GREEN}(A)dd${T_RESET} | ${C_L_RED}(D)elete${T_RESET} | (${C_L_CYAN}R${T_RESET})ename | (${C_L_CYAN}C${T_RESET})lone"
-        printMsg "  ${T_BOLD}Host Edit:${T_RESET}    (${C_L_CYAN}e${T_RESET})dit - wizard | (${C_L_CYAN}E${T_RESET})dit - advanced"
-        printMsg "  ${T_BOLD}Connection:${T_RESET}   ${C_L_YELLOW}ENTER${T_RESET} Connect | (${C_L_CYAN}t${T_RESET})est selected | (${C_L_CYAN}T${T_RESET})est all"
-        printMsg "${C_GRAY}${DIV}${T_RESET}"
-    }
-
-    # --- Main Loop ---
-    _refresh_host_list # Initial population of the host list.
-    while true; do
-        _draw_view
-
-        local key; key=$(read_single_char)
-        local selected_host=""
-        if (( num_options > 0 )); then
-            selected_host="${hosts[$current_option]}"
-        fi
-
-        case "$key" in
-            "$KEY_UP"|"k")
-                if (( num_options > 0 )); then current_option=$(( (current_option - 1 + num_options) % num_options )); fi ;;
-            "$KEY_DOWN"|"j")
-                if (( num_options > 0 )); then current_option=$(( (current_option + 1) % num_options )); fi ;;
-            "$KEY_ENTER")
-                if [[ -n "$selected_host" ]]; then
-                    # Ask for confirmation before connecting to prevent accidental connections.
-                    if prompt_yes_no "Connect to '${selected_host}'?" "y"; then
-                        clear
-                        exec ssh "$selected_host"
-                    fi
-                fi ;;
-            'a'|'A')
-                run_menu_action "add_ssh_host"
-                _refresh_host_list
-                ;;
-            'e')
-                if [[ -n "$selected_host" ]]; then
-                    run_menu_action "edit_ssh_host" "$selected_host"
-                    _refresh_host_list
-                fi ;;
-            'E')
-                if [[ -n "$selected_host" ]]; then
-                    run_menu_action "edit_ssh_host_in_editor" "$selected_host"
-                    _refresh_host_list
-                fi ;;
-            'd'|'D')
-                # Corresponds to user request for (D)elete
-                if [[ -n "$selected_host" ]]; then
-                    run_menu_action "remove_ssh_host" "$selected_host"
-                    _refresh_host_list
-                fi ;;
-            'r'|'R')
-                if [[ -n "$selected_host" ]]; then
-                    run_menu_action "rename_ssh_host" "$selected_host"
-                    _refresh_host_list
-                fi ;;
-            'c'|'C')
-                if [[ -n "$selected_host" ]]; then
-                    run_menu_action "clone_ssh_host" "$selected_host"
-                    _refresh_host_list
-                fi ;;
-            't')
-                if [[ -n "$selected_host" ]]; then
-                    clear; printBanner "Test SSH Connection"; _test_connection_for_host "$selected_host"; prompt_to_continue
-                fi ;;
-            'T')
-                run_menu_action "test_all_ssh_connections" ;;
-            "$KEY_ESC"|"q"|"Q")
-                return 0 ;; # Back to main menu
-        esac
-    done
+    _interactive_list_view \
+        "Server/Host Management" \
+        "_server_view_draw_header" \
+        "_server_view_refresh" \
+        "_server_view_key_handler" \
+        "_server_view_draw_footer"
 }
 
 interactive_key_management_view() {
