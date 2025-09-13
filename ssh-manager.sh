@@ -1809,34 +1809,6 @@ test_all_ssh_connections() {
     fi
 }
 
-# (Private) Common logic to execute and confirm a port forward command.
-_create_port_forward() {
-    local cmd_string="$1"
-    local explanation="$2"
-    local extra_notes="${3:-}"
-
-    printInfoMsg "$explanation"
-    if [[ -n "$extra_notes" ]]; then
-        printWarnMsg "$extra_notes"
-    fi
-
-    printMsg "\n${T_ULINE}Command to be run in the background:${T_RESET}"
-    printMsg "  ${C_L_BLUE}${cmd_string}${T_RESET}"
-    printMsg "\n${C_GRAY}The -N flag prevents executing a remote command, and -f runs it in the background.${T_RESET}"
-
-    if prompt_yes_no "Proceed with creating the port forward?" "y"; then
-        # The command already has -f to background itself.
-        if ${cmd_string}; then
-            printOkMsg "SSH port forward established successfully."
-            printInfoMsg "You can manage this forward using the 'List' and 'Stop' options in the 'Port Forwarding' menu."
-        else
-            printErrMsg "Failed to establish SSH port forward."
-        fi
-    else
-        printInfoMsg "Operation cancelled."
-    fi
-}
-
 # Sets up a local port forward (ssh -L).
 setup_local_port_forward() {
     printBanner "Setup Local Port Forward (ssh -L)"
@@ -1845,16 +1817,45 @@ setup_local_port_forward() {
     selected_host=$(select_ssh_host "Select a host for the port forward:" "false")
     [[ $? -ne 0 ]] && return
 
-    local local_port remote_host remote_port
-    prompt_for_input "Enter the LOCAL port to listen on" local_port "8080" || return
-    prompt_for_input "Enter the REMOTE host to connect to (from ${selected_host})" remote_host "localhost" || return
-    prompt_for_input "Enter the REMOTE port to connect to" remote_port "80" || return
+    local local_port="8080" remote_host="localhost" remote_port="80"
 
-    local forward_spec="${local_port}:${remote_host}:${remote_port}"
-    local cmd_string="ssh -N -f -L ${forward_spec} ${selected_host}"
-    local explanation="This will forward local port ${C_L_CYAN}${local_port}${T_RESET} to ${C_L_CYAN}${remote_host}:${remote_port}${T_RESET} on the remote network."
+    while true; do
+        clear
+        printBanner "Setup Local Port Forward (ssh -L)"
+        printInfoMsg "Selected host: ${C_L_CYAN}${selected_host}${T_RESET}"
 
-    _create_port_forward "$cmd_string" "$explanation"
+        prompt_for_input "Enter the LOCAL port to listen on" local_port "$local_port" || return
+        prompt_for_input "Enter the REMOTE host to connect to (from ${selected_host})" remote_host "$remote_host" || return
+        prompt_for_input "Enter the REMOTE port to connect to" remote_port "$remote_port" || return
+
+        local forward_spec="${local_port}:${remote_host}:${remote_port}"
+        local -a cmd_array=("ssh" "-o" "ExitOnForwardFailure=yes" "-N" "-f" "-L" "${forward_spec}" "${selected_host}")
+        local explanation="This will forward local port ${C_L_CYAN}${local_port}${T_RESET} to ${C_L_CYAN}${remote_host}:${remote_port}${T_RESET} on the remote network."
+
+        clear
+        printBanner "Setup Local Port Forward (ssh -L)"
+        printInfoMsg "$explanation"
+        printMsg "\n${T_ULINE}Command to be run in the background:${T_RESET}"
+        printMsg "  ${C_L_BLUE}${cmd_array[*]}${T_RESET}"
+        printMsg "\n${C_GRAY}The -N flag prevents executing a remote command, and -f runs it in the background.${T_RESET}"
+
+        if ! prompt_yes_no "Proceed with creating the port forward?" "y"; then
+            printInfoMsg "Operation cancelled."
+            return
+        fi
+
+        if run_with_spinner "Establishing port forward..." "${cmd_array[@]}"; then
+            printInfoMsg "You can manage this forward using the 'Port Forwarding' menu."
+            return 0
+        else
+            if prompt_yes_no "Would you like to modify the settings and try again?" "y"; then
+                continue
+            else
+                printInfoMsg "Operation cancelled."
+                return 1
+            fi
+        fi
+    done
 }
 
 # Sets up a remote port forward (ssh -R).
@@ -1865,17 +1866,125 @@ setup_remote_port_forward() {
     selected_host=$(select_ssh_host "Select a host to open a port on:" "false")
     [[ $? -ne 0 ]] && return
 
-    local local_port remote_host remote_port
-    prompt_for_input "Enter the REMOTE port to listen on (on ${selected_host})" remote_port "8080" || return
-    prompt_for_input "Enter the LOCAL host to connect to" remote_host "localhost" || return
-    prompt_for_input "Enter the LOCAL port to connect to" local_port "80" || return
+    local remote_port="8080" remote_host="localhost" local_port="80"
 
-    local forward_spec="${remote_port}:${remote_host}:${local_port}"
-    local cmd_string="ssh -N -f -R ${forward_spec} ${selected_host}"
-    local explanation="This will forward remote port ${C_L_CYAN}${remote_port}${T_RESET} on ${selected_host} to ${C_L_CYAN}${remote_host}:${local_port}${T_RESET} on your local machine."
-    local notes="Ensure 'GatewayPorts' is enabled in the server's sshd_config for remote forwards to be accessible externally."
+    while true; do
+        clear
+        printBanner "Setup Remote Port Forward (ssh -R)"
+        printInfoMsg "Selected host: ${C_L_CYAN}${selected_host}${T_RESET}"
 
-    _create_port_forward "$cmd_string" "$explanation" "$notes"
+        prompt_for_input "Enter the REMOTE port to listen on (on ${selected_host})" remote_port "$remote_port" || return
+        prompt_for_input "Enter the LOCAL host to connect to" remote_host "$remote_host" || return
+        prompt_for_input "Enter the LOCAL port to connect to" local_port "$local_port" || return
+
+        local forward_spec="${remote_port}:${remote_host}:${local_port}"
+        local -a cmd_array=("ssh" "-o" "ExitOnForwardFailure=yes" "-N" "-f" "-R" "${forward_spec}" "${selected_host}")
+        local explanation="This will forward remote port ${C_L_CYAN}${remote_port}${T_RESET} on ${selected_host} to ${C_L_CYAN}${remote_host}:${local_port}${T_RESET} on your local machine."
+        local notes="Ensure 'GatewayPorts' is enabled in the server's sshd_config for remote forwards to be accessible externally."
+
+        clear
+        printBanner "Setup Remote Port Forward (ssh -R)"
+        printInfoMsg "$explanation"
+        if [[ -n "$notes" ]]; then
+            printWarnMsg "$notes"
+        fi
+        printMsg "\n${T_ULINE}Command to be run in the background:${T_RESET}"
+        printMsg "  ${C_L_BLUE}${cmd_array[*]}${T_RESET}"
+        printMsg "\n${C_GRAY}The -N flag prevents executing a remote command, and -f runs it in the background.${T_RESET}"
+
+        if ! prompt_yes_no "Proceed with creating the port forward?" "y"; then
+            printInfoMsg "Operation cancelled."
+            return
+        fi
+
+        if run_with_spinner "Establishing port forward..." "${cmd_array[@]}"; then
+            printInfoMsg "You can manage this forward using the 'Port Forwarding' menu."
+            return 0
+        else
+            if prompt_yes_no "Would you like to modify the settings and try again?" "y"; then
+                continue
+            else
+                printInfoMsg "Operation cancelled."
+                return 1
+            fi
+        fi
+    done
+}
+
+# Clones an existing port forward, prompting for a new port.
+clone_port_forward() {
+    local type="$1"
+    local spec="$2"
+    local host="$3"
+
+    local flag remote_part old_port new_port_prompt new_port dest_host dest_port
+
+    if [[ "$type" == "Local" ]]; then
+        flag="-L"
+        old_port="${spec%%:*}"
+        remote_part="${spec#*:}"
+        dest_host="${remote_part%:*}"
+        dest_port="${remote_part##*:}"
+        new_port_prompt="Enter the NEW LOCAL port to listen on"
+        new_port=$((old_port + 1))
+    elif [[ "$type" == "Remote" ]]; then
+        flag="-R"
+        old_port="${spec%%:*}"
+        remote_part="${spec#*:}"
+        dest_host="${remote_part%:*}"
+        dest_port="${remote_part##*:}"
+        new_port_prompt="Enter the NEW REMOTE port to listen on (on ${host})"
+        new_port=$((old_port + 1))
+    else
+        printErrMsg "Cannot clone forward of unknown type: ${type}"
+        return 1
+    fi
+
+    while true; do
+        clear
+        printBanner "Clone Port Forward"
+        printInfoMsg "Cloning forward: ${C_L_CYAN}${spec}${T_RESET} (${type}) on host ${C_L_CYAN}${host}${T_RESET}"
+
+        prompt_for_input "$new_port_prompt" new_port "$new_port" || return
+
+        if [[ "$type" == "Local" ]]; then
+            prompt_for_input "Enter the REMOTE host to connect to (from ${host})" dest_host "$dest_host" || return
+            prompt_for_input "Enter the REMOTE port to connect to" dest_port "$dest_port" || return
+        else # Remote
+            prompt_for_input "Enter the LOCAL host to connect to" dest_host "$dest_host" || return
+            prompt_for_input "Enter the LOCAL port to connect to" dest_port "$dest_port" || return
+        fi
+
+        local new_spec="${new_port}:${dest_host}:${dest_port}"
+        local -a cmd_array=("ssh" "-o" "ExitOnForwardFailure=yes" "-N" "-f" "${flag}" "${new_spec}" "${host}")
+        local explanation notes=""
+        if [[ "$type" == "Local" ]]; then
+            explanation="This will forward local port ${C_L_CYAN}${new_port}${T_RESET} to ${C_L_CYAN}${dest_host}:${dest_port}${T_RESET} on the remote network."
+        else
+            explanation="This will forward remote port ${C_L_CYAN}${new_port}${T_RESET} on ${host} to ${C_L_CYAN}${dest_host}:${dest_port}${T_RESET} on your local machine."
+            notes="Ensure 'GatewayPorts' is enabled in the server's sshd_config for remote forwards to be accessible externally."
+        fi
+
+        clear
+        printBanner "Clone Port Forward"
+        printInfoMsg "$explanation"
+        if [[ -n "$notes" ]]; then printWarnMsg "$notes"; fi
+        printMsg "\n${T_ULINE}Command to be run in the background:${T_RESET}"
+        printMsg "  ${C_L_BLUE}${cmd_array[*]}${T_RESET}"
+        printMsg "\n${C_GRAY}The -N flag prevents executing a remote command, and -f runs it in the background.${T_RESET}"
+
+        if ! prompt_yes_no "Proceed with creating the port forward?" "y"; then
+            printInfoMsg "Operation cancelled."; return; fi
+
+        if run_with_spinner "Establishing port forward..." "${cmd_array[@]}"; then
+            printInfoMsg "You can manage this forward using the 'Port Forwarding' menu."; return 0
+        else
+            if prompt_yes_no "Would you like to modify the settings and try again?" "y"; then
+                continue
+            else
+                printInfoMsg "Operation cancelled."; return 1; fi
+        fi
+    done
 }
 
 # (Private) Formats a line for displaying port forward information with colors.
@@ -1916,7 +2025,10 @@ _get_active_port_forwards() {
     out_hosts=()
 
     local active_forwards
-    active_forwards=$(ps -eo pid,command | grep '[s]sh -N -f -[LR]')
+    # Use awk to find processes that are ssh and contain all the necessary flags for a backgrounded port forward.
+    # This is more robust than a simple grep, as it is not dependent on the order of arguments (e.g., -o).
+    # It looks for 'ssh', '-N', '-f', and either '-L' or '-R'.
+    active_forwards=$(ps -eo pid,command | awk '/[s]sh/ && /-N/ && /-f/ && /-[LR]/')
 
     if [[ -z "$active_forwards" ]]; then
         return 1 # No forwards found
@@ -1995,46 +2107,96 @@ list_all_hosts() {
     printMsg ""
 }
 
-# Interactively stops an active SSH port forward.
-stop_port_forward() {
-    printBanner "Stop a Port Forward"
+interactive_port_forward_view() {
+    # Hide cursor and ensure it is shown again when the function returns.
+    printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty
+    trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty' RETURN
 
-    local -a pids types specs hosts
-    if ! _get_active_port_forwards pids types specs hosts; then
-        printInfoMsg "No active port forwards to stop."
-        return
-    fi
+    local current_option=0
+    local -a pids=() types=() specs=() hosts=() menu_options=()
+    local num_options=0
 
-    local -a menu_options
-    for i in "${!pids[@]}"; do
-        menu_options+=("$(_format_port_forward_line "${pids[i]}" "${types[i]}" "${specs[i]}" "${hosts[i]}")")
+    # (Private) Fetches forwards and formatted details, then clamps the selection index.
+    _refresh_forward_list() {
+        # _get_active_port_forwards populates the arrays by nameref and clears them first.
+        _get_active_port_forwards pids types specs hosts
+
+        menu_options=()
+        for i in "${!pids[@]}"; do
+            menu_options+=("$(_format_port_forward_line "${pids[i]}" "${types[i]}" "${specs[i]}" "${hosts[i]}")")
+        done
+
+        num_options=${#pids[@]}
+
+        # Clamp current_option to be within bounds after a list change.
+        if (( current_option >= num_options )); then
+            current_option=$(( num_options - 1 ))
+        fi
+        if (( current_option < 0 )); then
+            current_option=0
+        fi
+    }
+
+    # (Private) Draws the main UI components.
+    _draw_view() {
+        clear
+        printBanner "Active Port Forwards"
+        local header; header=$(printf "   %-10s %-8s %-30s %s" "PID" "TYPE" "FORWARD" "HOST")
+        printMsg "  ${C_WHITE}${header}${T_RESET}"
+        printMsg "${C_GRAY}${DIV}${T_RESET}"
+
+        if [[ $num_options -gt 0 ]]; then
+            for i in "${!menu_options[@]}"; do
+                local pointer=" "
+                local highlight_start=""
+                local highlight_end=""
+                if (( i == current_option )); then
+                    pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"
+                    highlight_start="${T_REVERSE}"
+                    highlight_end="${T_RESET}"
+                fi
+                printMsg " ${pointer} ${highlight_start}${menu_options[i]}${highlight_end}${T_RESET}"
+            done
+        else
+            printMsg "  ${C_GRAY}(No active port forwards found.)${T_RESET}"
+        fi
+
+        printMsg "${C_GRAY}${DIV}${T_RESET}"
+        printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC${T_RESET} Back"
+        printMsg "  ${T_BOLD}Port Actions:${T_RESET} Add (${C_L_CYAN}L${T_RESET})ocal | Add (${C_L_CYAN}R${T_RESET})emote | (${C_L_RED}S${T_RESET})top | (${C_L_CYAN}C${T_RESET})lone"
+        printMsg "${C_GRAY}${DIV}${T_RESET}"
+    }
+
+    # --- Main Loop ---
+    while true; do
+        _refresh_forward_list
+        _draw_view
+
+        local key; key=$(read_single_char)
+        local selected_pid="" selected_spec="" selected_host="" selected_type=""
+        if (( num_options > 0 && current_option >= 0 )); then
+            selected_pid="${pids[$current_option]}"
+            selected_spec="${specs[$current_option]}"
+            selected_host="${hosts[$current_option]}"
+            selected_type="${types[$current_option]}"
+        fi
+
+        case "$key" in
+            "$KEY_UP"|"k") if (( num_options > 0 )); then current_option=$(( (current_option - 1 + num_options) % num_options )); fi ;;
+            "$KEY_DOWN"|"j") if (( num_options > 0 )); then current_option=$(( (current_option + 1) % num_options )); fi ;;
+            'l'|'L') run_menu_action "setup_local_port_forward" ;;
+            'r'|'R') run_menu_action "setup_remote_port_forward" ;;
+            's'|'S')
+                if [[ -n "$selected_pid" ]]; then
+                    local question="Stop port forward ${C_L_CYAN}${selected_spec}${T_RESET} on ${C_L_CYAN}${selected_host}${T_RESET} (PID: ${selected_pid})?"
+                    if prompt_yes_no "$question" "y"; then
+                        run_with_spinner "Stopping port forward (PID: ${selected_pid})" kill "$selected_pid"
+                    fi
+                fi ;;
+            'c'|'C') if [[ -n "$selected_pid" ]]; then run_menu_action "clone_port_forward" "$selected_type" "$selected_spec" "$selected_host"; fi ;;
+            "$KEY_ESC"|"q"|"Q") return 0 ;;
+        esac
     done
-
-    local header
-    header=$(printf "  %-10s %-8s %-30s %s" "PID" "TYPE" "FORWARD" "HOST")
-
-    local selected_index
-    selected_index=$(interactive_single_select_menu "Select a port forward to stop:" "${C_WHITE}${header}${T_RESET}" "${menu_options[@]}")
-    [[ $? -ne 0 ]] && { printInfoMsg "Stop operation cancelled."; return; }
-
-    local pid_to_kill="${pids[$selected_index]}"; local spec_to_kill="${specs[$selected_index]}"; local host_to_kill="${hosts[$selected_index]}"
-    local question="Are you sure you want to stop the port forward:\n     ${C_L_CYAN}${spec_to_kill}${T_RESET} on ${C_L_CYAN}${host_to_kill}${T_RESET} (PID: ${pid_to_kill})?"
-    if prompt_yes_no "$question" "n"; then
-        run_with_spinner "Stopping port forward (PID: ${pid_to_kill})" kill "$pid_to_kill"
-    else
-        clear_lines_up 1
-        printInfoMsg "Stop operation cancelled."
-    fi
-}
-
-interactive_port_forward_manager() {
-    local -a menu_definition=(
-        "List active port forwards"         "list_active_port_forwards"
-        "Setup new Local forward (ssh -L)"  "setup_local_port_forward"
-        "Setup new Remote forward (ssh -R)" "setup_remote_port_forward"
-        "Stop a port forward"               "stop_port_forward"
-    )
-    _run_submenu "Port Forwarding" "${menu_definition[@]}"
 }
 
 # Backs up the SSH config file to a timestamped file.
@@ -2336,7 +2498,7 @@ main_loop() {
         case "${menu_options[$selected_index]}" in
         "Server Management") interactive_server_management_view ;;
         "Key Management") key_menu ;;
-        "Port Forwarding") interactive_port_forward_manager ;;
+        "Port Forwarding") interactive_port_forward_view ;;
         "Advanced Tools") advanced_menu ;;
         "Exit") break ;;
         esac
@@ -2364,8 +2526,8 @@ main() {
             -p|--port-forward)
                 # Prereqs for port forwarding. ps and kill are for managing forwards.
                 _setup_environment "ssh" "awk" "grep" "ps" "kill"
-                # The function is self-contained and has its own loop.
-                interactive_port_forward_manager
+                # The view is self-contained and has its own loop.
+                interactive_port_forward_view
                 exit 0
                 ;;
             -l|--list-hosts)
