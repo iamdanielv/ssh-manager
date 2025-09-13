@@ -1609,41 +1609,117 @@ edit_ssh_host_in_editor() {
     printOkMsg "Host '${host_to_edit}' has been updated from editor."
 }
 
-# Clones an existing SSH host configuration to a new alias.
+# (Private) Draws the new interactive UI for cloning a host.
+# Highlights any values that have changed from the original.
+_draw_interactive_clone_host_ui() {
+    local new_alias="$1" new_hostname="$2" new_user="$3" new_port="$4" new_identityfile="$5"
+    local original_hostname="$6" original_user="$7" original_port="$8" original_identityfile="$9"
+
+    # Helper to format a line, adding a change indicator if needed.
+    _format_clone_line() {
+        local key="$1" label="$2" new_val="$3" original_val="$4"
+
+        local display_val="${new_val}"
+        if [[ "$label" == "IdentityFile" ]]; then
+            display_val="${new_val/#$HOME/\~}"
+        fi
+
+        if [[ -z "$display_val" ]]; then
+            display_val="${C_GRAY}(not set)${T_RESET}"
+        else
+            display_val="${C_L_CYAN}${display_val}${T_RESET}"
+        fi
+
+        local change_indicator=" "
+        # For the alias, there is no original, it's always new.
+        if [[ "$label" != "Host (Alias)" ]]; then
+            local expanded_new_val="${new_val/#\~/$HOME}"
+            local expanded_orig_val="${original_val/#\~/$HOME}"
+            if [[ "$expanded_new_val" != "$expanded_orig_val" ]]; then
+                change_indicator="${C_L_YELLOW}*${T_RESET}"
+            fi
+        else
+            # The alias is always a "change" in a sense.
+            change_indicator="${C_L_YELLOW}*${T_RESET}"
+        fi
+
+        printf "  ${C_L_WHITE}%s)${T_RESET} %b %-15s: %b\n" "$key" "$change_indicator" "$label" "$display_val"
+    }
+
+    printMsg "Configure the new cloned host:"
+    _format_clone_line "1" "Host (Alias)" "$new_alias" "" # No original alias
+    _format_clone_line "2" "HostName" "$new_hostname" "$original_hostname"
+    _format_clone_line "3" "User" "$new_user" "$original_user"
+    _format_clone_line "4" "Port" "$new_port" "$original_port"
+    _format_clone_line "5" "IdentityFile" "$new_identityfile" "$original_identityfile"
+
+    echo
+    printMsg "  ${C_L_WHITE}c) ${C_L_YELLOW}(C)ancel/(D)iscard${T_RESET} all pending changes"
+    printMsg "  ${C_L_WHITE}s) ${C_L_GREEN}(S)ave${T_RESET} new host and Quit"
+    printMsg "  ${C_L_WHITE}q) ${C_L_YELLOW}(Q)uit${T_RESET} without saving (or press ${C_L_YELLOW}ESC${T_RESET})"
+    echo
+    printMsgNoNewline "${T_QST_ICON} Your choice: "
+}
+
+# Clones an existing SSH host configuration to a new alias using an interactive UI.
 clone_ssh_host() {
     local host_to_clone="$1"
     if [[ -z "$host_to_clone" ]]; then
-        printBanner "Clone SSH Host ${C_L_YELLOW}(ESC to cancel)${C_BLUE}"
+        printBanner "Clone SSH Host"
         host_to_clone=$(select_ssh_host "Select a host to clone:")
         [[ $? -ne 0 ]] && return # select_ssh_host prints messages
-        # After selection, clear the screen to make way for the new, more specific banner.
-        clear
     fi
 
-    # Now that we have the host_to_clone, print a more specific banner.
-    printBanner "Clone Host from ${C_CYAN}'${host_to_clone}' ${C_L_YELLOW}(ESC to cancel)${C_BLUE}"
+    # Get original values from the source host.
+    local original_hostname original_user original_port original_identityfile
+    local details; details=$(_get_all_ssh_config_values_as_string "$host_to_clone")
+    eval "${details//current/original}" # Sets original_hostname, original_user, original_port
+    original_identityfile=$(_get_explicit_ssh_config_value "$host_to_clone" "IdentityFile")
+    [[ -z "$original_port" ]] && original_port="22"
 
-    local new_alias
-    # Pass the host_to_clone as the default value for the prompt.
-    _prompt_for_unique_host_alias new_alias "Enter the new alias for the cloned host" "" "$host_to_clone" || return
+    # These variables will hold the values for the new cloned host.
+    local new_hostname="$original_hostname" new_user="$original_user" new_port="$original_port" new_identityfile="$original_identityfile"
+    # Propose a unique new alias.
+    local new_alias i=1
+    while true; do
+        local proposed_alias="${host_to_clone}-clone"; [[ $i -gt 1 ]] && proposed_alias+="-${i}"
+        if ! get_ssh_hosts | grep -qFx "$proposed_alias"; then new_alias="$proposed_alias"; break; fi
+        ((i++))
+    done
 
-    local original_block
-    original_block=$(_get_host_block_from_config "$host_to_clone" "$SSH_CONFIG_PATH")
+    while true; do
+        clear; printBanner "Clone Host from ${C_L_CYAN}${host_to_clone}${C_BLUE}"
+        _draw_interactive_clone_host_ui "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile" \
+                                        "$original_hostname" "$original_user" "$original_port" "$original_identityfile"
 
-    if [[ -z "$original_block" ]]; then
-        printErrMsg "Could not find configuration block for '${host_to_clone}'."
-        return 1
-    fi
-
-    # Replace the original 'Host ...' line with the new one.
-    # Use printf to avoid `echo` adding an extra newline before piping to sed.
-    local new_block
-    new_block=$(printf '%s' "$original_block" | sed -E "s/^[[:space:]]*[Hh]ost[[:space:]].*/Host ${new_alias}/")
-
-    # Append the new block to the config file, ensuring separation.
-    echo -e "\n${new_block}" >> "$SSH_CONFIG_PATH"
-
-    printOkMsg "Host '${host_to_clone}' successfully cloned to '${new_alias}'."
+        local key; key=$(read_single_char)
+        case "$key" in
+            '1') _prompt_for_unique_host_alias new_alias "Enter the new alias for the cloned host" "" "$new_alias" ;;
+            '2') prompt_for_input "HostName" new_hostname "$new_hostname" ;;
+            '3') prompt_for_input "User" new_user "$new_user" ;;
+            '4') prompt_for_input "Port" new_port "$new_port" ;;
+            '5') clear_current_line; _prompt_for_identity_file_interactive new_identityfile "$new_identityfile" "$new_alias" "$new_user" "$new_hostname" ;;
+            'c'|'C'|'d'|'D')
+                clear_current_line
+                if prompt_yes_no "Discard all pending changes?" "y"; then
+                    new_hostname="$original_hostname"; new_user="$original_user"; new_port="$original_port"; new_identityfile="$original_identityfile"
+                    printInfoMsg "Changes discarded."; sleep 1
+                fi ;;
+            's'|'S')
+                clear_current_line
+                if get_ssh_hosts | grep -qFx "$new_alias"; then printErrMsg "Host alias '${new_alias}' already exists."; sleep 2; continue; fi
+                _append_host_to_config "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile"
+                if [[ -n "$new_identityfile" ]] && prompt_yes_no "Copy public key to the new server now?" "n"; then copy_ssh_id_for_host "$new_alias" "${new_identityfile}.pub"; fi
+                break ;;
+            'q'|'Q'|"$KEY_ESC")
+                local expanded_new_idfile="${new_identityfile/#\~/$HOME}"; local expanded_orig_idfile="${original_identityfile/#\~/$HOME}"
+                if [[ "$new_hostname" != "$original_hostname" || "$new_user" != "$original_user" || "$new_port" != "$original_port" || "$expanded_new_idfile" != "$expanded_orig_idfile" ]]; then
+                    clear_current_line
+                    if prompt_yes_no "You have unsaved changes. Quit without saving?" "n"; then printInfoMsg "Clone cancelled."; sleep 1; break; fi
+                else break; fi ;;
+        esac
+    done
+    return 0
 }
 
 # (Private) The worker function that performs the file re-ordering.
