@@ -2194,107 +2194,78 @@ list_all_hosts() {
     printMsg ""
 }
 
-interactive_port_forward_view() {
-    # Hide cursor and ensure it is shown again when the function returns.
-    printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty
-    trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty' RETURN
+# --- Port Forwarding View Helpers ---
 
-    local current_option=0
-    local -a pids=() types=() specs=() hosts=() menu_options=()
-    local num_options=0
+_port_forward_view_draw_header() {
+    local header; header=$(printf "   %-10s %-8s %-30s %s" "PID" "TYPE" "FORWARD" "HOST")
+    printMsg "  ${C_WHITE}${header}${T_RESET}"
+}
 
-    # (Private) Fetches forwards and formatted details, then clamps the selection index.
-    _refresh_forward_list() {
-        # _get_active_port_forwards populates the arrays by nameref and clears them first.
-        _get_active_port_forwards pids types specs hosts
+_port_forward_view_draw_footer() {
+    printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC${T_RESET} Back"
+    printMsg "  ${T_BOLD}Port Actions:${T_RESET} Add (${C_L_CYAN}L${T_RESET})ocal | Add (${C_L_CYAN}R${T_RESET})emote | (${C_L_RED}S${T_RESET})top | (${C_L_CYAN}C${T_RESET})lone"
+}
 
-        menu_options=()
-        for i in "${!pids[@]}"; do
-            menu_options+=("$(_format_port_forward_line "${pids[i]}" "${types[i]}" "${specs[i]}" "${hosts[i]}")")
-        done
+_port_forward_view_refresh() {
+    local -n out_menu_options="$1"
+    local -n out_data_payloads="$2"
+    out_menu_options=()
+    out_data_payloads=()
 
-        num_options=${#pids[@]}
+    local -a pids types specs hosts
+    if ! _get_active_port_forwards pids types specs hosts; then
+        return # No forwards found
+    fi
 
-        # Clamp current_option to be within bounds after a list change.
-        if (( current_option >= num_options )); then
-            current_option=$(( num_options - 1 ))
-        fi
-        if (( current_option < 0 )); then
-            current_option=0
-        fi
-    }
-
-    # (Private) Draws the main UI components.
-    _draw_view() {
-        clear
-        printBanner "Active Port Forwards"
-        local header; header=$(printf "   %-10s %-8s %-30s %s" "PID" "TYPE" "FORWARD" "HOST")
-        printMsg "  ${C_WHITE}${header}${T_RESET}"
-        printMsg "${C_GRAY}${DIV}${T_RESET}"
-
-        if [[ $num_options -gt 0 ]]; then
-            for i in "${!menu_options[@]}"; do
-                local pointer=" "
-                local highlight_start=""
-                local highlight_end=""
-                if (( i == current_option )); then
-                    pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"
-                    highlight_start="${T_REVERSE}"
-                    highlight_end="${T_RESET}"
-                fi
-                printMsg " ${pointer} ${highlight_start}${menu_options[i]}${highlight_end}${T_RESET}"
-            done
-        else
-            printMsg "  ${C_GRAY}(No active port forwards found.)${T_RESET}"
-        fi
-
-        printMsg "${C_GRAY}${DIV}${T_RESET}"
-        printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC${T_RESET} Back"
-        printMsg "  ${T_BOLD}Port Actions:${T_RESET} Add (${C_L_CYAN}L${T_RESET})ocal | Add (${C_L_CYAN}R${T_RESET})emote | (${C_L_RED}S${T_RESET})top | (${C_L_CYAN}C${T_RESET})lone"
-        printMsg "${C_GRAY}${DIV}${T_RESET}"
-    }
-
-    # --- Main Loop ---
-    _refresh_forward_list # Initial population of the list.
-    while true; do
-        _draw_view
-
-        local key; key=$(read_single_char)
-        local selected_pid="" selected_spec="" selected_host="" selected_type=""
-        if (( num_options > 0 && current_option >= 0 )); then
-            selected_pid="${pids[$current_option]}"
-            selected_spec="${specs[$current_option]}"
-            selected_host="${hosts[$current_option]}"
-            selected_type="${types[$current_option]}"
-        fi
-
-        case "$key" in
-            "$KEY_UP"|"k") if (( num_options > 0 )); then current_option=$(( (current_option - 1 + num_options) % num_options )); fi ;;
-            "$KEY_DOWN"|"j") if (( num_options > 0 )); then current_option=$(( (current_option + 1) % num_options )); fi ;;
-            'l'|'L')
-                run_menu_action "setup_local_port_forward"
-                _refresh_forward_list
-                ;;
-            'r'|'R')
-                run_menu_action "setup_remote_port_forward"
-                _refresh_forward_list
-                ;;
-            's'|'S')
-                if [[ -n "$selected_pid" ]]; then
-                    local question="Stop port forward ${C_L_CYAN}${selected_spec}${T_RESET} on ${C_L_CYAN}${selected_host}${T_RESET} (PID: ${selected_pid})?"
-                    if prompt_yes_no "$question" "y"; then
-                        run_with_spinner "Stopping port forward (PID: ${selected_pid})" kill "$selected_pid"
-                        _refresh_forward_list
-                    fi
-                fi ;;
-            'c'|'C')
-                if [[ -n "$selected_pid" ]]; then
-                    run_menu_action "clone_port_forward" "$selected_type" "$selected_spec" "$selected_host"
-                    _refresh_forward_list
-                fi ;;
-            "$KEY_ESC"|"q"|"Q") return 0 ;;
-        esac
+    for i in "${!pids[@]}"; do
+        # Formatted string for display
+        out_menu_options+=("$(_format_port_forward_line "${pids[i]}" "${types[i]}" "${specs[i]}" "${hosts[i]}")")
+        # Pipe-delimited string for the data payload
+        out_data_payloads+=("${pids[i]}|${types[i]}|${specs[i]}|${hosts[i]}")
     done
+}
+
+_port_forward_view_key_handler() {
+    local key="$1"
+    local selected_payload="$2"
+    # local selected_index="$3" # Unused
+    local -n out_result="$4"
+
+    out_result=0 # Default to no-op
+
+    # Parse the payload if an item is selected
+    local selected_pid="" selected_type="" selected_spec="" selected_host=""
+    if [[ -n "$selected_payload" ]]; then
+        IFS='|' read -r selected_pid selected_type selected_spec selected_host <<< "$selected_payload"
+    fi
+
+    case "$key" in
+        'l'|'L') run_menu_action "setup_local_port_forward"; out_result=1 ;;
+        'r'|'R') run_menu_action "setup_remote_port_forward"; out_result=1 ;;
+        's'|'S')
+            if [[ -n "$selected_pid" ]]; then
+                local question="Stop port forward ${C_L_CYAN}${selected_spec}${T_RESET} on ${C_L_CYAN}${selected_host}${T_RESET} (PID: ${selected_pid})?"
+                if prompt_yes_no "$question" "y"; then
+                    run_with_spinner "Stopping port forward (PID: ${selected_pid})" kill "$selected_pid"
+                    out_result=1 # Refresh list
+                fi
+            fi ;;
+        'c'|'C')
+            if [[ -n "$selected_pid" ]]; then
+                run_menu_action "clone_port_forward" "$selected_type" "$selected_spec" "$selected_host"
+                out_result=1 # Refresh list
+            fi ;;
+        "$KEY_ESC"|"q"|"Q") out_result=2 ;; # Exit view
+    esac
+}
+
+interactive_port_forward_view() {
+    _interactive_list_view \
+        "Active Port Forwards" \
+        "_port_forward_view_draw_header" \
+        "_port_forward_view_refresh" \
+        "_port_forward_view_key_handler" \
+        "_port_forward_view_draw_footer"
 }
 
 # Backs up the SSH config file to a timestamped file.
