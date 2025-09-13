@@ -956,90 +956,6 @@ prompt_for_input() {
     done
 }
 
-# (Private) Prompts for a new, unique SSH host alias.
-# It allows the user to re-enter the same alias when renaming, which is treated as a no-op.
-# Uses a nameref to return the value.
-# Usage: _prompt_for_unique_host_alias alias_var [prompt_text] [old_alias_to_allow] [default_value]
-# Returns 0 on success, 1 on cancellation.
-_prompt_for_unique_host_alias() {
-    local -n out_alias_var="$1"
-    local prompt_text="${2:-Enter a short alias for the host}"
-    local old_alias_to_allow="${3:-}"
-    local default_value="${4:-}"
-
-    while true; do
-        # Pass the default value, which might be the old alias or the user's previous (invalid) input.
-        prompt_for_input "$prompt_text" out_alias_var "$default_value" || return 1
-
-        # If renaming and the user entered the old name, it's a valid "no-op" choice.
-        if [[ -n "$old_alias_to_allow" && "$out_alias_var" == "$old_alias_to_allow" ]]; then
-            return 0
-        fi
-
-        # Check if host alias already exists in the main config file.
-        if [[ -f "$SSH_CONFIG_PATH" ]] && grep -q -E "^\s*Host\s+${out_alias_var}\s*$" "$SSH_CONFIG_PATH"; then
-            printErrMsg "Host alias '${out_alias_var}' already exists. Please choose another."
-            # Set the default for the next loop iteration to what the user just typed.
-            default_value="$out_alias_var"
-        else
-            return 0 # Alias is unique, success
-        fi
-    done
-}
-
-# (Private) Prompts the user for the core details of a new SSH host.
-# It handles validating the alias is unique and uses namerefs to return values.
-# Usage: _prompt_for_host_details host_alias_var host_name_var user_var [default_hostname] [default_user]
-# Returns 0 on success, 1 on cancellation.
-_prompt_for_host_details() {
-    local -n out_alias="$1"
-    local -n out_hostname="$2"
-    local -n out_user="$3"
-    local -n out_port="$4"
-    local default_hostname="${5:-}"
-    local default_user="${6:-$USER}"
-    local default_port="${7:-22}"
-
-    _prompt_for_unique_host_alias out_alias "Enter a short alias for the host (e.g., 'server')" || return 1
-    prompt_for_input "Enter the HostName (IP address or FQDN)" out_hostname "$default_hostname" || return 1
-    prompt_for_input "Enter the remote User" out_user "$default_user" || return 1
-    prompt_for_input "Enter the Port" out_port "$default_port" || return 1
-
-    return 0
-}
-
-# (Private) Handles the logic for generating a new dedicated key for a host.
-# Returns the path to the new key via a nameref.
-# Usage: _generate_and_get_dedicated_key identity_file_var host_alias user host_name
-# Returns 0 on success, 1 on cancellation/failure.
-_generate_and_get_dedicated_key() {
-    local -n out_identity_file="$1"
-    local host_alias="$2"
-    local user="$3"
-    local host_name="$4"
-
-    local new_key_path="${SSH_DIR}/${host_alias}_id_ed25519"
-    local should_generate=true
-    if [[ -f "$new_key_path" ]]; then
-        prompt_yes_no "Key file '${new_key_path}' already exists.\n    Overwrite it?" "n"
-        local overwrite_choice=$?
-        if [[ $overwrite_choice -eq 1 ]]; then # No
-            should_generate=false
-            printInfoMsg "Using existing key file: ${new_key_path}"
-        elif [[ $overwrite_choice -eq 2 ]]; then # Cancel
-            return 1
-        fi
-    fi
-
-    if [[ "$should_generate" == "true" ]]; then
-        run_with_spinner "Generating new ed25519 key for ${host_alias}..." \
-            ssh-keygen -t ed25519 -f "$new_key_path" -N "" -C "${user}@${host_name}" || return 1
-    fi
-
-    out_identity_file="$new_key_path"
-    return 0
-}
-
 # (Private) Handles the logic for selecting an existing key.
 # Returns the path to the selected key via a nameref.
 # Usage: _select_and_get_existing_key identity_file_var
@@ -1059,57 +975,6 @@ _select_and_get_existing_key() {
     local key_idx
     key_idx=$(interactive_single_select_menu "Select the private key to use:" "" "${private_key_paths[@]}") || return 1
     out_identity_file="${private_key_paths[$key_idx]}"
-    return 0
-}
-
-# (Private) Manages the SSH key selection and creation process for a new host.
-# It returns the path to the selected/created IdentityFile via a nameref.
-# It also handles the post-creation action of copying the key to the server.
-# Usage: _handle_ssh_key_for_new_host identity_file_var host_alias host_name user [cloned_host] [cloned_key_path]
-# Returns 0 on success, 1 on cancellation/failure.
-_get_identity_file_for_new_host() {
-    local -n out_identity_file="$1"
-    local host_alias="$2"
-    local host_name="$3"
-    local user="$4"
-    local cloned_host="${5:-}"
-    local cloned_key_path="${6:-}"
-
-    out_identity_file="" # Default to no key
-
-    local -a key_options=(
-        "Generate a new dedicated key (ed25519) for this host"
-        "Select an existing key"
-        "Do not specify a key (use SSH defaults)"
-    )
-
-    if [[ -n "$cloned_key_path" ]]; then
-        key_options=("Use same key as '${cloned_host}' (${cloned_key_path/#$HOME/\~})" "${key_options[@]}")
-    fi
-
-    local key_choice_idx
-    key_choice_idx=$(interactive_single_select_menu "How do you want to handle the SSH key for this host?" "" "${key_options[@]}")
-    if [[ $? -ne 0 ]]; then return 1; fi
-    local selected_key_option="${key_options[$key_choice_idx]}"
-
-    case "$selected_key_option" in
-        "Use same key as "*) # Use a glob to match the dynamic part
-            out_identity_file="$cloned_key_path"
-            ;;
-        "Generate a new dedicated key (ed25519) for this host")
-            _generate_and_get_dedicated_key out_identity_file "$host_alias" "$user" "$host_name" || return 1
-            ;;
-        "Select an existing key")
-            _select_and_get_existing_key out_identity_file || {
-                # If it fails, provide a helpful message.
-                printInfoMsg "You can generate a key from the main menu first."
-                return 1
-            }
-            ;;
-        "Do not specify a key (use SSH defaults)")
-            # out_identity_file is already empty
-            ;;
-    esac
     return 0
 }
 
@@ -1158,65 +1023,115 @@ _append_host_to_config() {
     printOkMsg "Host '${host_alias}' added to ${SSH_CONFIG_PATH}${key_msg}."
 }
 
+# (Private) Draws the new interactive UI for adding a host.
+_draw_interactive_add_host_ui() {
+    local new_alias="$1" new_hostname="$2" new_user="$3" new_port="$4" new_identityfile="$5"
+
+    _format_add_line() {
+        local key="$1" label="$2" new_val="$3"
+
+        local display_val="${new_val}"
+        if [[ "$label" == "IdentityFile" ]]; then
+            display_val="${new_val/#$HOME/\~}"
+        fi
+
+        if [[ -z "$display_val" ]]; then
+            display_val="${C_GRAY}(not set)${T_RESET}"
+        else
+            display_val="${C_L_CYAN}${display_val}${T_RESET}"
+        fi
+
+        # Keep a space for alignment with other UIs that have a change indicator
+        printf "  ${C_L_WHITE}%s)${T_RESET}   %-15s: %b\n" "$key" "$label" "$display_val"
+    }
+
+    printMsg "Configure the new host:"
+    _format_add_line "1" "Host (Alias)" "$new_alias"
+    _format_add_line "2" "HostName" "$new_hostname"
+    _format_add_line "3" "User" "$new_user"
+    _format_add_line "4" "Port" "$new_port"
+    _format_add_line "5" "IdentityFile" "$new_identityfile"
+
+    echo
+    printMsg "  ${C_L_WHITE}c) ${C_L_YELLOW}(C)ancel/(D)iscard${T_RESET} and reset fields"
+    printMsg "  ${C_L_WHITE}s) ${C_L_GREEN}(S)ave${T_RESET} new host and Quit"
+    printMsg "  ${C_L_WHITE}q) ${C_L_YELLOW}(Q)uit${T_RESET} without saving (or press ${C_L_YELLOW}ESC${T_RESET})"
+    echo
+    printMsgNoNewline "${T_QST_ICON} Your choice: "
+}
+
 # Prompts user for details and adds a new host to the SSH config.
 add_ssh_host() {
     printBanner "Add New SSH Host"
-
-    local host_alias host_name user port identity_file
-    local default_hostname="" default_user="${USER}" default_port="22" default_identity_file=""
-    local host_to_clone=""
 
     # --- Step 1: Choose to create from scratch or clone ---
     local -a add_options=("Create a new host from scratch" "Clone settings from an existing host")
     local add_choice_idx
     add_choice_idx=$(interactive_single_select_menu "How would you like to add the new host?" "" "${add_options[@]}")
-    if [[ $? -ne 0 ]]; then
-        printInfoMsg "Host creation cancelled."
-        return
-    fi
+    if [[ $? -ne 0 ]]; then printInfoMsg "Host creation cancelled."; return; fi
 
+    # --- Step 2: Set initial values ---
+    local initial_alias="" initial_hostname="" initial_user="$USER" initial_port="22" initial_identityfile=""
+    local creation_mode="scratch"
+    local host_to_clone=""
     if [[ "${add_options[$add_choice_idx]}" == "Clone settings from an existing host" ]]; then
         host_to_clone=$(select_ssh_host "Select a host to clone settings from:")
-        if [[ $? -ne 0 ]]; then return; fi # select_ssh_host prints its own message
+        if [[ $? -ne 0 ]]; then return; fi
+        creation_mode="clone"
 
-        printInfoMsg "Cloning settings from '${C_L_CYAN}${host_to_clone}${T_RESET}'."
-        default_hostname=$(get_ssh_config_value "$host_to_clone" "HostName")
-        default_user=$(get_ssh_config_value "$host_to_clone" "User")
-        default_port=$(get_ssh_config_value "$host_to_clone" "Port")
-        default_identity_file=$(_get_explicit_ssh_config_value "$host_to_clone" "IdentityFile")
+        local i=1; while true; do
+            local proposed_alias="${host_to_clone}-clone"; [[ $i -gt 1 ]] && proposed_alias+="-${i}"
+            if ! get_ssh_hosts | grep -qFx "$proposed_alias"; then initial_alias="$proposed_alias"; break; fi; ((i++))
+        done
+        initial_hostname=$(get_ssh_config_value "$host_to_clone" "HostName")
+        initial_user=$(get_ssh_config_value "$host_to_clone" "User")
+        initial_port=$(get_ssh_config_value "$host_to_clone" "Port")
+        initial_identityfile=$(_get_explicit_ssh_config_value "$host_to_clone" "IdentityFile")
+        [[ -z "$initial_port" ]] && initial_port="22"
     fi
 
-    # --- Step 2: Get host details ---
-    if ! _prompt_for_host_details host_alias host_name user port "$default_hostname" "$default_user" "${default_port:-22}"; then
-        # _prompt_for_host_details prints cancellation message
-        return
-    fi
+    local new_alias="$initial_alias" new_hostname="$initial_hostname" new_user="$initial_user" new_port="$initial_port" new_identityfile="$initial_identityfile"
 
-    # --- Step 3: Handle SSH key ---
-    if ! _get_identity_file_for_new_host identity_file "$host_alias" "$host_name" "$user" "$host_to_clone" "$default_identity_file"; then
-        printInfoMsg "Host creation cancelled during key selection."
-        return
-    fi
+    while true; do
+        clear
+        if [[ "$creation_mode" == "clone" ]]; then printBanner "Add New Host (cloned from ${C_L_CYAN}${host_to_clone}${C_BLUE})"; else printBanner "Add New SSH Host"; fi
+        _draw_interactive_add_host_ui "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile"
 
-    # --- Step 4: Write to config file FIRST ---
-    # This ensures the host exists for subsequent actions like ssh-copy-id.
-    _append_host_to_config "$host_alias" "$host_name" "$user" "$port" "$identity_file"
+        local key; key=$(read_single_char)
+        case "$key" in
+            '1') _prompt_for_unique_host_alias new_alias "Enter a short alias for the host" "" "$new_alias" ;;
+            '2') prompt_for_input "Enter the HostName (IP or FQDN)" new_hostname "$new_hostname" ;;
+            '3') prompt_for_input "Enter the remote User" new_user "$new_user" ;;
+            '4') prompt_for_input "Enter the Port" new_port "$new_port" ;;
+            '5') clear_current_line; _prompt_for_identity_file_interactive new_identityfile "$new_identityfile" "$new_alias" "$new_user" "$new_hostname" ;;
+            'c'|'C'|'d'|'D')
+                clear_current_line
+                if prompt_yes_no "Discard all changes and reset fields?" "y"; then
+                    new_alias="$initial_alias"; new_hostname="$initial_hostname"; new_user="$initial_user"; new_port="$initial_port"; new_identityfile="$initial_identityfile"
+                    printInfoMsg "Fields reset."; sleep 1
+                fi ;;
+            's'|'S')
+                clear_current_line
+                if [[ -z "$new_alias" || -z "$new_hostname" ]]; then printErrMsg "Host Alias and HostName cannot be empty."; sleep 2; continue; fi
+                if get_ssh_hosts | grep -qFx "$new_alias"; then printErrMsg "Host alias '${new_alias}' already exists."; sleep 2; continue; fi
 
-    # --- Step 3.5: Ask to copy the key (if one was selected/created) ---
-    if [[ -n "$identity_file" ]]; then
-        # Default to 'y' if a new key was generated, 'n' otherwise.
-        local default_copy="n"
-        [[ "${add_options[$add_choice_idx]}" == "Create a new host from scratch" ]] && default_copy="y"
-        if prompt_yes_no "Do you want to copy the public key to the server now?" "$default_copy"; then
-            copy_ssh_id_for_host "$host_alias" "${identity_file}.pub" # This will now work as the host exists
-        fi
-    fi
+                _append_host_to_config "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile"
 
-    # --- Step 5: Post-creation actions ---
-    if prompt_yes_no "Do you want to test the connection to '${host_alias}' now?" "y"; then
-        echo # Add a newline for spacing
-        _test_connection_for_host "$host_alias"
-    fi
+                if [[ -n "$new_identityfile" ]]; then
+                    local default_copy="n"; [[ "$creation_mode" == "scratch" ]] && default_copy="y"
+                    if prompt_yes_no "Copy public key to the new server now?" "$default_copy"; then copy_ssh_id_for_host "$new_alias" "${new_identityfile}.pub"; fi
+                fi
+                if prompt_yes_no "Test the connection to '${new_alias}' now?" "y"; then echo; _test_connection_for_host "$new_alias"; fi
+                break ;;
+            'q'|'Q'|"$KEY_ESC")
+                local expanded_new_idfile="${new_identityfile/#\~/$HOME}"; local expanded_init_idfile="${initial_identityfile/#\~/$HOME}"
+                if [[ "$new_alias" != "$initial_alias" || "$new_hostname" != "$initial_hostname" || "$new_user" != "$initial_user" || "$new_port" != "$initial_port" || "$expanded_new_idfile" != "$expanded_init_idfile" ]]; then
+                    clear_current_line
+                    if prompt_yes_no "You have unsaved changes. Quit without saving?" "n"; then printInfoMsg "Host creation cancelled."; sleep 1; break; fi
+                else break; fi ;;
+        esac
+    done
+    return 0
 }
 
 # (Private) Generic function to process an SSH config file, filtering host blocks.
