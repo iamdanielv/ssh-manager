@@ -261,9 +261,15 @@ interactive_multi_select_menu() {
 
 interactive_single_select_menu() {
     if ! [[ -t 0 ]]; then printErrMsg "Not an interactive session." >&2; return 1; fi
-    local prompt="$1"; shift; local -a options=("$@"); local num_options=${#options[@]}
+    local prompt="$1"; local header="$2"; shift 2; local -a options=("$@"); local num_options=${#options[@]}
     if [[ $num_options -eq 0 ]]; then printErrMsg "No options provided to menu." >&2; return 1; fi
     local current_option=0
+    local header_lines=0
+    if [[ -n "$header" ]]; then
+        # Count newlines in header to correctly calculate menu height for clearing.
+        header_lines=$(echo -e "$header" | wc -l)
+    fi
+
     _draw_menu_options() {
         local output=""; for i in "${!options[@]}"; do
             local pointer=" "; local highlight_start=""; local highlight_end=""
@@ -272,14 +278,18 @@ interactive_single_select_menu() {
         echo -ne "$output"; }
     printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty; trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty' EXIT
     echo -e "${C_GRAY}(Use ${C_L_CYAN}↓/↑${C_GRAY} to navigate, ${C_L_GREEN}enter${C_GRAY} to confirm, ${C_L_YELLOW}q/esc${C_GRAY} to cancel)${T_RESET}" >/dev/tty
-    echo -e "${T_QST_ICON} ${prompt}" >/dev/tty; echo -e "${C_GRAY}${DIV}${T_RESET}" >/dev/tty; _draw_menu_options >/dev/tty
-    local key; local menu_height=$((num_options + 3)); while true; do
+    echo -e "${T_QST_ICON} ${prompt}" >/dev/tty; echo -e "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
+    if [[ -n "$header" ]]; then
+        echo -e "  ${header}${T_RESET}" >/dev/tty
+    fi
+    _draw_menu_options >/dev/tty
+    local key; local menu_height=$((num_options + 3 + header_lines)); while true; do
         move_cursor_up "$num_options"; key=$(read_single_char </dev/tty)
         case "$key" in
             "$KEY_UP"|"k") current_option=$(( (current_option - 1 + num_options) % num_options ));;
             "$KEY_DOWN"|"j") current_option=$(( (current_option + 1) % num_options ));;
-            "$KEY_ENTER") clear_lines_down "$menu_height"; clear_lines_up 3; echo "$current_option"; return 0;;
-            "$KEY_ESC"|"q") clear_lines_down "$menu_height"; clear_lines_up 3; return 1;;
+            "$KEY_ENTER") clear_lines_down "$menu_height"; clear_lines_up $((3 + header_lines)); echo "$current_option"; return 0;;
+            "$KEY_ESC"|"q") clear_lines_down "$menu_height"; clear_lines_up $((3 + header_lines)); return 1;;
         esac; _draw_menu_options >/dev/tty; done
 }
 
@@ -504,7 +514,7 @@ get_detailed_ssh_hosts_menu_options() {
         fi
 
         local formatted_string
-        formatted_string=$(printf "%-20s - ${C_L_CYAN}%s@%s%s${T_RESET}%s" \
+        formatted_string=$(printf "%-20s ${C_L_CYAN}%s@%s%s${T_RESET}%s" \
             "${host_alias}" \
             "${current_user:-?}" \
             "${current_hostname:-?}" \
@@ -534,7 +544,9 @@ select_ssh_host() {
     get_detailed_ssh_hosts_menu_options menu_options
 
     local selected_index
-    selected_index=$(interactive_single_select_menu "$prompt" "${menu_options[@]}")
+    local header
+    header=$(printf "  %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "DETAILS (user@hostname:port)")
+    selected_index=$(interactive_single_select_menu "$prompt" "$header" "${menu_options[@]}")
     if [[ $? -ne 0 ]]; then
         printInfoMsg "Operation cancelled."
         return 1
