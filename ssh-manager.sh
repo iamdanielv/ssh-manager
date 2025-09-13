@@ -1909,19 +1909,13 @@ stop_port_forward() {
 }
 
 interactive_port_forward_manager() {
-    local -a ordered_options=(
-        "List active port forwards"
-        "Setup new Local forward (ssh -L)"
-        "Setup new Remote forward (ssh -R)"
-        "Stop a port forward"
+    local -a menu_definition=(
+        "List active port forwards"         "list_active_port_forwards"
+        "Setup new Local forward (ssh -L)"  "setup_local_port_forward"
+        "Setup new Remote forward (ssh -R)" "setup_remote_port_forward"
+        "Stop a port forward"               "stop_port_forward"
     )
-    local -A actions_map=(
-        ["List active port forwards"]="list_active_port_forwards"
-        ["Setup new Local forward (ssh -L)"]="setup_local_port_forward"
-        ["Setup new Remote forward (ssh -R)"]="setup_remote_port_forward"
-        ["Stop a port forward"]="stop_port_forward"
-    )
-    _run_submenu "Port Forwarding" ordered_options actions_map
+    _run_submenu "Port Forwarding" "${menu_definition[@]}"
 }
 
 # Backs up the SSH config file to a timestamped file.
@@ -1959,14 +1953,22 @@ run_menu_action() {
 
 # (Private) Generic function to display and handle a submenu loop.
 # It takes a banner title, an array of ordered options, and a map of options to actions.
-# Usage: _run_submenu <banner_title> <ordered_options_array_name> <actions_map_name>
+# Usage: _run_submenu <banner_title> "Option 1" "action1" "Option 2" "action2" ...
 _run_submenu() {
     local banner_title="$1"
-    local -n options_ref="$2"
-    local -n actions_ref="$3"
+    shift
+    local -a menu_definition=("$@")
+
+    local -a ordered_options
+    local -A actions_map
+
+    for ((i=0; i<${#menu_definition[@]}; i+=2)); do
+        ordered_options+=("${menu_definition[i]}")
+        actions_map["${menu_definition[i]}"]="${menu_definition[i+1]}"
+    done
 
     # Add the 'Back' option to the list for display
-    local -a menu_options=("${options_ref[@]}" "Back to main menu")
+    local -a menu_options=("${ordered_options[@]}" "Back to main menu")
 
     while true; do
         clear
@@ -1983,7 +1985,7 @@ _run_submenu() {
         fi
 
         # Get the action from the map.
-        local action="${actions_ref[$selected_option]}"
+        local action="${actions_map[$selected_option]}"
 
         # Handle special actions identified by a "SPECIAL_" prefix.
         if [[ "$action" == "SPECIAL_CONNECT" ]]; then
@@ -2017,59 +2019,37 @@ _run_submenu() {
 }
 
 server_menu() {
-    local -a ordered_options=(
-        "Connect to a server"
-        "Test connection to a single server"
-        "Test connection to ALL servers"
-        "Add a new server"
-        "Edit a server's configuration"
-        "Remove a server"
+    local -a menu_definition=(
+        "Connect to a server"                "SPECIAL_CONNECT"
+        "Test connection to a single server" "test_ssh_connection"
+        "Test connection to ALL servers"     "test_all_ssh_connections"
+        "Add a new server"                   "add_ssh_host"
+        "Edit a server's configuration"      "edit_ssh_host"
+        "Remove a server"                    "remove_ssh_host"
     )
-    local -A actions_map=(
-        ["Connect to a server"]="SPECIAL_CONNECT"
-        ["Test connection to a single server"]="test_ssh_connection"
-        ["Test connection to ALL servers"]="test_all_ssh_connections"
-        ["Add a new server"]="add_ssh_host"
-        ["Edit a server's configuration"]="edit_ssh_host"
-        ["Remove a server"]="remove_ssh_host"
-    )
-    _run_submenu "Server Management" ordered_options actions_map
+    _run_submenu "Server Management" "${menu_definition[@]}"
 }
 
 key_menu() {
-    local -a ordered_options=(
-        "Copy an SSH key to a server"
-        "Generate a new SSH key"
+    local -a menu_definition=(
+        "Copy an SSH key to a server" "copy_ssh_id"
+        "Generate a new SSH key"      "generate_ssh_key"
     )
-    local -A actions_map=(
-        ["Copy an SSH key to a server"]="copy_ssh_id"
-        ["Generate a new SSH key"]="generate_ssh_key"
-    )
-    _run_submenu "Key Management" ordered_options actions_map
+    _run_submenu "Key Management" "${menu_definition[@]}"
 }
 
 advanced_menu() {
-    local -a ordered_options=(
-        "Open SSH config in editor"
-        "Edit host block in editor"
-        "Rename a host alias"
-        "Clone an existing host"
-        "Reorder hosts in config file"
-        "Backup SSH config"
-        "Export hosts to a file"
-        "Import hosts from a file"
+    local -a menu_definition=(
+        "Open SSH config in editor"      "SPECIAL_EDIT_CONFIG"
+        "Edit host block in editor"      "edit_ssh_host_in_editor"
+        "Rename a host alias"            "rename_ssh_host"
+        "Clone an existing host"         "clone_ssh_host"
+        "Reorder hosts in config file"   "reorder_ssh_hosts"
+        "Backup SSH config"              "backup_ssh_config"
+        "Export hosts to a file"         "export_ssh_hosts"
+        "Import hosts from a file"       "import_ssh_hosts"
     )
-    local -A actions_map=(
-        ["Open SSH config in editor"]="SPECIAL_EDIT_CONFIG"
-        ["Edit host block in editor"]="edit_ssh_host_in_editor"
-        ["Rename a host alias"]="rename_ssh_host"
-        ["Clone an existing host"]="clone_ssh_host"
-        ["Reorder hosts in config file"]="reorder_ssh_hosts"
-        ["Backup SSH config"]="backup_ssh_config"
-        ["Export hosts to a file"]="export_ssh_hosts"
-        ["Import hosts from a file"]="import_ssh_hosts"
-    )
-    _run_submenu "Advanced Tools" ordered_options actions_map
+    _run_submenu "Advanced Tools" "${menu_definition[@]}"
 }
 
 # Bypasses the main menu and goes directly to the host selection for a direct connection.
