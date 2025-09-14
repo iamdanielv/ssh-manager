@@ -294,11 +294,13 @@ _interactive_menu() {
     _draw_menu_options >/dev/tty
     echo -e "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
 
+    local movement_keys="↓/↑/j/k"
+    local select_action="${C_L_GREEN}SPACE/ENTER${C_WHITE} to confirm"
     if [[ "$mode" == "multi" ]]; then
-        echo -e "  ${C_L_CYAN}↓/↑${C_WHITE} Move | ${C_L_CYAN}SPACE${C_WHITE} to select | ${C_L_GREEN}ENTER${C_WHITE} to confirm | ${C_L_YELLOW}Q/ESC${C_GRAY} to cancel${T_RESET}" >/dev/tty
-    else
-        echo -e "  ${C_L_CYAN}↓/↑/j/k${C_WHITE} Move | ${C_L_GREEN}SPACE/ENTER${C_WHITE} to confirm | ${C_L_YELLOW}Q/ESC${C_GRAY} to cancel${T_RESET}" >/dev/tty
+        movement_keys="↓/↑"
+        select_action="${C_L_CYAN}SPACE${C_WHITE} to select | ${C_L_GREEN}ENTER${C_WHITE} to confirm"
     fi
+    echo -e "  ${C_L_CYAN}${movement_keys}${C_WHITE} Move | ${select_action} | ${C_L_YELLOW}Q/ESC${C_GRAY} to cancel${T_RESET}" >/dev/tty
 
     move_cursor_up 2 # Move to end of options list
 
