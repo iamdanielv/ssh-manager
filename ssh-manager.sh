@@ -67,9 +67,9 @@ export KEY_DELETE=$'\033[3~'
 #endregion Key Codes
 
 #region Logging & Banners
-printMsg() { echo -e "${1}"; }
+printMsg() { printf '%s\n' "$1"; }
 
-printMsgNoNewline() { echo -n -e "${1}"; }
+printMsgNoNewline() { printf '%s' "$1"; }
 
 printErrMsg() { printMsg "${T_ERR_ICON}${T_ERR} ${1} ${T_RESET}"; }
 
@@ -83,7 +83,7 @@ printWarnMsg() { printMsg "${T_WARN_ICON} ${1}${T_RESET}"; }
 generate_banner_string() {
     local prompt="$1"
     # H1-style banner for top-level calls
-    echo -n -e "${C_L_BLUE}+ ${prompt}\n${DIV}${T_RESET}"
+    printf '%s' "${C_L_BLUE}+ ${prompt}"$'\n'"${DIV}${T_RESET}"
 }
 
 printBanner() {
@@ -96,7 +96,7 @@ printBanner() {
 clear_current_line() {
     # \e[2K: clear entire line
     # \r: move cursor to beginning of the line
-    echo -ne "\e[2K\r" >/dev/tty
+    printf '\033[2K\r' >/dev/tty
 }
 
 clear_lines_up() {
@@ -104,9 +104,9 @@ clear_lines_up() {
     for ((i = 0; i < lines; i++)); do
         # \e[1A: move cursor up one line
         # \e[2K: clear entire line
-        echo -ne "\e[1A\e[2K"
+        printf '\033[1A\033[2K'
     done
-    echo -ne "\r" # Move cursor to the beginning of the line
+    printf '\r' # Move cursor to the beginning of the line
 } >/dev/tty
 
 clear_lines_down() {
@@ -116,10 +116,10 @@ clear_lines_down() {
     for ((i = 0; i < lines; i++)); do
         # \e[2K: clear entire line
         # \n: move to next line
-        echo -ne "\e[2K\n"
+        printf '\033[2K\n'
     done
     # \e[<N>A: move cursor up N lines
-    echo -ne "\e[${lines}A"
+    printf '\033[%sA' "$lines"
 } >/dev/tty
 
 move_cursor_up() {
@@ -129,9 +129,9 @@ move_cursor_up() {
     if (( lines > 0 )); then
         # Using a loop of "up 1" can be more reliable in some terminals
         # than a single "up N" command, which helps prevent screen tearing.
-        for ((i = 0; i < lines; i++)); do echo -ne "\e[1A"; done
+        for ((i = 0; i < lines; i++)); do printf '\033[1A'; done
     fi
-    echo -ne "\r" # Move cursor to the beginning of the line
+    printf '\r' # Move cursor to the beginning of the line
 } >/dev/tty
 #endregion Terminal Control
 
@@ -278,28 +278,28 @@ _interactive_menu() {
                 fi
                 # The highlight is applied to the whole line. The checkbox style is applied only to the checkbox.
                 # We reset the checkbox style before the option text, then re-apply the main highlight.
-                output+=" ${pointer} ${highlight_start}${checkbox_style}${checkbox_text}${T_RESET}${highlight_start} ${option_text}${T_CLEAR_LINE}${highlight_end}${T_RESET}\n"
+                output+=" ${pointer} ${highlight_start}${checkbox_style}${checkbox_text}${T_RESET}${highlight_start} ${option_text}${T_CLEAR_LINE}${highlight_end}${T_RESET}"$'\n'
             else # single
-                output+=" ${pointer} ${highlight_start} ${options[i]} ${T_CLEAR_LINE}${highlight_end}${T_RESET}\n"
+                output+=" ${pointer} ${highlight_start} ${options[i]} ${T_CLEAR_LINE}${highlight_end}${T_RESET}"$'\n'
             fi
         done
-        echo -ne "$output"
+        printf '%s' "$output"
     }
 
     # --- UI Rendering ---
     printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty; trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty' EXIT
-    echo -e "${T_QST_ICON} ${prompt}" >/dev/tty; echo -e "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
-    if [[ -n "$header" ]]; then echo -e "  ${header}${T_RESET}" >/dev/tty; fi
+    printf '%s\n' "${T_QST_ICON} ${prompt}" >/dev/tty; printf '%s\n' "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
+    if [[ -n "$header" ]]; then printf '  %s%s\n' "${header}" "${T_RESET}" >/dev/tty; fi
     _draw_menu_options >/dev/tty
-    echo -e "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
+    printf '%s\n' "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
 
-    local movement_keys="↓/↑/j/k"
+    local movement_keys="↓/↑"
     local select_action="${C_L_GREEN}SPACE/ENTER${C_WHITE} to confirm"
     if [[ "$mode" == "multi" ]]; then
         movement_keys="↓/↑"
         select_action="${C_L_CYAN}SPACE${C_WHITE} to select | ${C_L_GREEN}ENTER${C_WHITE} to confirm"
     fi
-    echo -e "  ${C_L_CYAN}${movement_keys}${C_WHITE} Move | ${select_action} | ${C_L_YELLOW}Q/ESC${C_GRAY} to cancel${T_RESET}" >/dev/tty
+    printf '  %s%s%s Move | %s | %s%s%s to cancel%s\n' "${C_L_CYAN}" "${movement_keys}" "${C_WHITE}" "${select_action}" "${C_L_YELLOW}" "Q/ESC" "${C_GRAY}" "${T_RESET}" >/dev/tty
 
     move_cursor_up 2 # Move to end of options list
 
@@ -357,13 +357,13 @@ interactive_reorder_menu() {
             local pointer=" "; local highlight_start=""; local highlight_end=""
             if (( i == current_pos )); then pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"; fi
             if (( i == held_item_idx )); then highlight_start="${T_REVERSE}"; highlight_end="${T_RESET}"; fi
-            output+="  ${pointer} ${highlight_start}${current_items[i]}${T_CLEAR_LINE}${highlight_end}${T_RESET}\n"; done
-        echo -ne "$output"; }
+            output+="  ${pointer} ${highlight_start}${current_items[i]}${T_CLEAR_LINE}${highlight_end}${T_RESET}"$'\n'; done;
+        printf '%s' "$output"; }
     printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty; trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty' EXIT
-    echo -e "${T_QST_ICON} ${prompt}" >/dev/tty; echo -e "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
+    printf '%s\n' "${T_QST_ICON} ${prompt}" >/dev/tty; printf '%s\n' "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
     _draw_reorder_menu >/dev/tty
-    echo -e "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
-    echo -e "${C_GRAY}(${C_L_CYAN}↓/↑/j/k${C_GRAY} move, ${C_L_CYAN}space${C_GRAY} grab/drop, ${C_L_GREEN}enter${C_GRAY} save, ${C_L_YELLOW}q/esc${C_GRAY} cancel)${T_RESET}" >/dev/tty
+    printf '%s\n' "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
+    printf '%s(%s↓/↑%s move, %sspace%s grab/drop, %senter%s save, %sq/esc%s cancel)%s\n' "${C_GRAY}" "${C_L_CYAN}" "${C_GRAY}" "${C_L_CYAN}" "${C_GRAY}" "${C_L_GREEN}" "${C_GRAY}" "${C_L_YELLOW}" "${C_GRAY}" "${T_RESET}" >/dev/tty
 
     move_cursor_up 2 # Move to end of items list
 
@@ -476,8 +476,8 @@ trap 'script_interrupt_handler' INT
 #region Prerequisite & Sanity Checks
 _check_command_exists() { command -v "$1" &>/dev/null; }
 prereq_checks() {
-    local missing_commands=(); printMsgNoNewline "${T_INFO_ICON} Running prereq checks"
-    for cmd in "$@"; do printMsgNoNewline "${C_L_BLUE}.${T_RESET}"; if ! _check_command_exists "$cmd"; then missing_commands+=("$cmd"); fi; done; echo
+    local missing_commands=(); printf '%s Running prereq checks' "${T_INFO_ICON}"
+    for cmd in "$@"; do printf '%b.%b' "${C_L_BLUE}" "${T_RESET}"; if ! _check_command_exists "$cmd"; then missing_commands+=("$cmd"); fi; done; echo
     if [[ ${#missing_commands[@]} -gt 0 ]]; then
         clear_lines_up 1; printErrMsg "Prerequisite checks failed. Missing commands:"
         for cmd in "${missing_commands[@]}"; do printMsg "    - ${C_L_YELLOW}${cmd}${T_RESET}"; done
@@ -490,8 +490,8 @@ prereq_checks() {
 SPINNER_OUTPUT=""
 _run_with_spinner_non_interactive() {
     local desc="$1"; shift; local cmd=("$@"); printMsgNoNewline "${desc} " >&2
-    if SPINNER_OUTPUT=$("${cmd[@]}" 2>&1); then echo -e "${C_L_GREEN}Done.${T_RESET}" >&2; return 0
-    else local exit_code=$?; echo -e "${C_RED}Failed.${T_RESET}" >&2
+    if SPINNER_OUTPUT=$("${cmd[@]}" 2>&1); then printf '%s\n' "${C_L_GREEN}Done.${T_RESET}" >&2; return 0
+    else local exit_code=$?; printf '%s\n' "${C_RED}Failed.${T_RESET}" >&2
         while IFS= read -r line; do printf '    %s\n' "$line"; done <<< "$SPINNER_OUTPUT" >&2; return $exit_code; fi
 }
 
@@ -499,14 +499,14 @@ _run_with_spinner_interactive() {
     local desc="$1"; shift; local cmd=("$@"); local temp_output_file; temp_output_file=$(mktemp)
     if [[ ! -f "$temp_output_file" ]]; then printErrMsg "Failed to create temp file."; return 1; fi
     local spinner_chars="⣾⣷⣯⣟⡿⢿⣻⣽"; local i=0; "${cmd[@]}" &> "$temp_output_file" &
-    local pid=$!; tput civis; trap 'tput cnorm; rm -f "$temp_output_file"; exit 130' INT TERM
+    local pid=$!; printMsgNoNewline "${T_CURSOR_HIDE}" >&2; trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >&2; rm -f "$temp_output_file"; exit 130' INT TERM
     while ps -p $pid > /dev/null; do
-        echo -ne "\r\e[2K" >&2; local line; line=$(tail -n 1 "$temp_output_file" 2>/dev/null | tr -d '\r' || true)
-        echo -ne " ${C_L_BLUE}${spinner_chars:$i:1}${T_RESET}  ${desc}" >&2
-        if [[ -n "$line" ]]; then echo -ne " ${C_GRAY}[${line:0:70}]${T_RESET}" >&2; fi
+        printf '\r\033[2K' >&2; local line; line=$(tail -n 1 "$temp_output_file" 2>/dev/null | tr -d '\r' || true)
+        printf ' %s%s%s  %s' "${C_L_BLUE}" "${spinner_chars:$i:1}" "${T_RESET}" "${desc}" >&2
+        if [[ -n "$line" ]]; then printf ' %s[%s]%s' "${C_GRAY}" "${line:0:70}" "${T_RESET}" >&2; fi
         i=$(((i + 1) % ${#spinner_chars})); sleep 0.1; done
-    wait $pid; local exit_code=$?; SPINNER_OUTPUT=$(<"$temp_output_file"); rm "$temp_output_file"
-    tput cnorm; trap - INT TERM; clear_current_line >&2
+    wait $pid; local exit_code=$?; SPINNER_OUTPUT=$(<"$temp_output_file"); rm "$temp_output_file";
+    printMsgNoNewline "${T_CURSOR_SHOW}" >&2; trap - INT TERM; clear_current_line >&2
     if [[ $exit_code -eq 0 ]]; then printOkMsg "${desc}" >&2
     else printErrMsg "Task failed: ${desc}" >&2
         while IFS= read -r line; do printf '    %s\n' "$line"; done <<< "$SPINNER_OUTPUT" >&2; fi
@@ -520,20 +520,20 @@ run_with_spinner() {
 wait_for_pids_with_spinner() {
     local desc="$1"; shift; local pids_to_wait_for=("$@")
     if [[ ! -t 1 ]]; then
-        printMsgNoNewline "    ${T_INFO_ICON} ${desc}... " >&2
-        if wait "${pids_to_wait_for[@]}"; then echo -e "${C_L_GREEN}Done.${T_RESET}" >&2; return 0
-        else local exit_code=$?; echo -e "${C_RED}Failed (wait command exit code: $exit_code).${T_RESET}" >&2; return $exit_code; fi
+        printMsgNoNewline "    ${T_INFO_ICON} ${desc}... " >&2;
+        if wait "${pids_to_wait_for[@]}"; then printf '%s\n' "${C_L_GREEN}Done.${T_RESET}" >&2; return 0
+        else local exit_code=$?; printf '%s\n' "${C_RED}Failed (wait command exit code: $exit_code).${T_RESET}" >&2; return $exit_code; fi
     fi
     _spinner() {
-        local spinner_chars="⣾⣷⣯⣟⡿⢿⣻⣽"; local i=0
-        while true; do echo -ne "\r\e[2K" >&2; echo -ne "    ${C_L_BLUE}${spinner_chars:$i:1}${T_RESET} ${desc}" >&2; i=$(((i + 1) % ${#spinner_chars})); sleep 0.1; done
+        local spinner_chars="⣾⣷⣯⣟⡿⢿⣻⣽"; local i=0;
+        while true; do printf '\r\033[2K' >&2; printf '    %s%s%s %s' "${C_L_BLUE}" "${spinner_chars:$i:1}" "${T_RESET}" "${desc}" >&2; i=$(((i + 1) % ${#spinner_chars})); sleep 0.1; done;
     }
-    tput civis
+    printMsgNoNewline "${T_CURSOR_HIDE}" >&2
     _spinner &
     local spinner_pid=$!
-    trap 'kill "$spinner_pid" &>/dev/null; tput cnorm; exit 130' INT TERM
+    trap 'kill "$spinner_pid" &>/dev/null; printMsgNoNewline "${T_CURSOR_SHOW}" >&2; exit 130' INT TERM
     wait "${pids_to_wait_for[@]}"; local exit_code=$?
-    kill "$spinner_pid" &>/dev/null; tput cnorm; trap - INT TERM; clear_current_line >&2
+    kill "$spinner_pid" &>/dev/null; printMsgNoNewline "${T_CURSOR_SHOW}" >&2; trap - INT TERM; clear_current_line >&2
     if [[ $exit_code -eq 0 ]]; then printOkMsg "${desc}" >&2
     else printErrMsg "Wait command failed with exit code ${exit_code} for task: ${desc}" >&2; fi
     return $exit_code
@@ -554,7 +554,7 @@ print_usage() {
     printMsg "  $(basename "$0") [option]"
     printMsg "\nThis script is fully interactive.\nRun without arguments to launch the main menu."
     printMsg "\n${T_ULINE}Options:${T_RESET}"
-    printMsg "  ${C_L_BLUE}-c, --connect${T_RESET}  Go directly to host selection for connecting"
+    printMsg "  ${C_L_BLUE}-c, --connect${T_RESET}      Go directly to host selection for connecting"
     printMsg "  ${C_L_BLUE}-a, --add${T_RESET}      Go directly to the 'Add a new server' menu"
     printMsg "  ${C_L_BLUE}-p, --port-forward${T_RESET} Go directly to the 'Port Forwarding' menu"
     printMsg "  ${C_L_BLUE}-l, --list-hosts${T_RESET}    List all configured hosts and exit"
@@ -1044,8 +1044,8 @@ prompt_for_input() {
         # left by the number of characters that are *after* the cursor position.
         local chars_after_cursor=$(( ${#input_str} - cursor_pos ))
         if (( chars_after_cursor > 0 )); then
-            # \e[<N>D moves cursor left N columns
-            echo -ne "\e[${chars_after_cursor}D" >/dev/tty
+            # \033[<N>D moves cursor left N columns
+            printf '\033[%sD' "$chars_after_cursor" >/dev/tty
         fi
 
         key=$(read_single_char </dev/tty)
@@ -1497,7 +1497,7 @@ edit_ssh_host() {
 
     local config_without_host; config_without_host=$(_remove_host_block_from_config "$original_alias")
     local new_host_block; new_host_block=$(_build_host_block_string "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile")
-    echo -e "${config_without_host}\n\n${new_host_block}" | cat -s > "$SSH_CONFIG_PATH"
+    printf '%s\n\n%s' "$config_without_host" "$new_host_block" | cat -s > "$SSH_CONFIG_PATH"
     printOkMsg "Host '${original_alias}' has been updated to '${new_alias}'."
 
     if [[ -n "$original_identityfile" && "$expanded_new_idfile" != "$expanded_orig_idfile" ]]; then
@@ -1629,7 +1629,7 @@ edit_ssh_host_in_editor() {
     # Get the config content without the old host block and append the new one
     local config_without_host
     config_without_host=$(_remove_host_block_from_config "$host_to_edit")
-    echo -e "${config_without_host}\n\n${new_block}" | cat -s > "$SSH_CONFIG_PATH"
+    printf '%s\n\n%s' "$config_without_host" "$new_block" | cat -s > "$SSH_CONFIG_PATH"
 
     printOkMsg "Host '${host_to_edit}' has been updated from editor."
 }
@@ -1711,13 +1711,13 @@ _reorder_ssh_hosts_worker() {
 
     # Append the re-ordered managed host blocks.
     for host in "${new_ordered_hosts[@]}"; do
-        # Ensure there's a newline before appending each block.
-        echo -e "\n${host_blocks[$host]}" >> "$SSH_CONFIG_PATH"
+        # Ensure there's a newline before appending each block. Using printf for portability.
+        printf '\n%s' "${host_blocks[$host]}" >> "$SSH_CONFIG_PATH"
     done
 
     # Append the footer if it existed.
     if [[ -n "$footer_content" ]]; then
-        echo -e "\n${footer_content}" >> "$SSH_CONFIG_PATH"
+        printf '\n%s' "${footer_content}" >> "$SSH_CONFIG_PATH"
     fi
 
     # 5. Clean up multiple blank lines that may have been introduced.
@@ -1934,9 +1934,9 @@ import_ssh_hosts() {
             case $choice in
                 0) # Yes
                     # Atomically replace the host block
-                    local config_without_host; config_without_host=$(_remove_host_block_from_config "$host")
+                    local config_without_host; config_without_host=$(_remove_host_block_from_config "$host");
                     local new_block; new_block=$(_get_host_block_from_config "$host" "$import_file")
-                    echo -e "${config_without_host}\n\n${new_block}" | cat -s > "$SSH_CONFIG_PATH"
+                    printf '%s\n\n%s' "$config_without_host" "$new_block" | cat -s > "$SSH_CONFIG_PATH"
                     ((overwritten_count++))
                     ;;
                 1) # No
