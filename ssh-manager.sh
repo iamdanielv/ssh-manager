@@ -264,7 +264,7 @@ _interactive_menu() {
 
             if [[ "$mode" == "multi" ]]; then
                 local checkbox_text="[ ]"
-                local checkbox_style=""
+                local checkbox_style="${T_RESET}"
                 if (( selected_options[i] == 1 )); then
                     checkbox_text="[✓]"
                     checkbox_style="${C_GREEN}${T_BOLD}"
@@ -278,9 +278,9 @@ _interactive_menu() {
                 fi
                 # The highlight is applied to the whole line. The checkbox style is applied only to the checkbox.
                 # We reset the checkbox style before the option text, then re-apply the main highlight.
-                output+=" ${pointer} ${highlight_start}${checkbox_style}${checkbox_text}${T_RESET}${highlight_start} ${option_text}${highlight_end}${T_RESET}${T_CLEAR_LINE}\n"
+                output+=" ${pointer} ${highlight_start}${checkbox_style}${checkbox_text}${T_RESET}${highlight_start} ${option_text}${T_CLEAR_LINE}${highlight_end}${T_RESET}\n"
             else # single
-                output+=" ${pointer} ${highlight_start} ${options[i]} ${highlight_end}${T_RESET}${T_CLEAR_LINE}\n"
+                output+=" ${pointer} ${highlight_start} ${options[i]} ${T_CLEAR_LINE}${highlight_end}${T_RESET}\n"
             fi
         done
         echo -ne "$output"
@@ -357,7 +357,7 @@ interactive_reorder_menu() {
             local pointer=" "; local highlight_start=""; local highlight_end=""
             if (( i == current_pos )); then pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"; fi
             if (( i == held_item_idx )); then highlight_start="${T_REVERSE}"; highlight_end="${T_RESET}"; fi
-            output+="  ${pointer} ${highlight_start}${current_items[i]}${highlight_end}${T_RESET}${T_CLEAR_LINE}\n"; done
+            output+="  ${pointer} ${highlight_start}${current_items[i]}${T_CLEAR_LINE}${highlight_end}${T_RESET}\n"; done
         echo -ne "$output"; }
     printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty; trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty' EXIT
     echo -e "${T_QST_ICON} ${prompt}" >/dev/tty; echo -e "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
@@ -431,13 +431,12 @@ _interactive_list_view() {
 
         if [[ $num_options -gt 0 ]]; then
             for i in "${!menu_options[@]}"; do
-                local pointer=" "; local highlight_start=""; local highlight_end=""
                 if (( i == current_option )); then
-                    pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"
-                    highlight_start="${T_REVERSE}"
-                    highlight_end="${T_RESET}"
+                    local pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"
+                    printMsg " ${pointer} ${T_REVERSE}${menu_options[i]}${T_RESET}"
+                else
+                    printMsg "   ${menu_options[i]}${T_RESET}"
                 fi
-                printMsg " ${pointer} ${highlight_start}${menu_options[i]}${highlight_end}"
             done
         else
             printMsg "  ${C_GRAY}(No items found.)${T_RESET}"
@@ -789,22 +788,23 @@ get_detailed_ssh_hosts_menu_options() {
         local key_info=""
         if [[ "$show_key_info" == "true" && -n "$current_identityfile" ]]; then
             # Using #$HOME is safer than a simple string replacement
-            key_info=" (${C_WHITE}${current_identityfile/#$HOME/\~}${T_RESET})"
+            # Color the path white, then switch back to cyan for the closing parenthesis.
+            key_info=" (${C_WHITE}${current_identityfile/#$HOME/\~}${C_L_CYAN})"
         fi
 
         # Format port info, only show if not the default port 22
         local port_info=""
         if [[ -n "$current_port" && "$current_port" != "22" ]]; then
-            port_info=":${C_L_YELLOW}${current_port}${T_RESET}"
+            # Color the port yellow, then switch back to the base cyan color.
+            port_info=":${C_L_YELLOW}${current_port}${C_L_CYAN}"
         fi
 
-        local formatted_string
-        formatted_string=$(printf "%-20s ${C_L_CYAN}%s@%s%s${T_RESET}%s" \
-            "${host_alias}" \
-            "${current_user:-?}" \
-            "${current_hostname:-?}" \
-            "${port_info}" \
-            "${key_info}"
+        # Build the details part of the string with all its colors.
+        local details_string="${C_L_CYAN}${current_user:-?}@${current_hostname:-?}${port_info}${key_info}"
+
+        # Use a simple printf to combine the padded host alias and the details string.
+        # This is more robust than having color codes inside the printf format string.
+        local formatted_string; formatted_string=$(printf "%-20b %b${T_RESET}" "${host_alias}" "${details_string}"
         )
         out_array+=("$formatted_string")
     done
@@ -2461,7 +2461,7 @@ list_all_hosts() {
 
     for option in "${menu_options[@]}"; do
         # The menu options are already formatted with colors.
-        printMsg "${option}"
+        printMsg "${option}${T_RESET}"
     done
 
     # add space
