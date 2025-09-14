@@ -217,93 +217,133 @@ prompt_to_continue() {
 }
 
 # --- Interactive Menus ---
-interactive_multi_select_menu() {
-    # Ensure the script is running in an interactive terminal
+# (Private) Generic interactive menu function.
+# This is the new core implementation for both single and multi-select menus.
+#
+# Usage:
+#   _interactive_menu <mode> <prompt> <header> <options_array>
+#
+#   mode: "single" or "multi"
+#
+# Returns:
+#   - For "single" mode: The index of the selected option on stdout.
+#   - For "multi" mode: The indices of selected options on stdout, one per line.
+#   - Exit code 0 on success, 1 on cancellation or no selection.
+_interactive_menu() {
+    local mode="$1"; local prompt="$2"; local header="$3"; shift 3; local -a options=("$@")
+
     if ! [[ -t 0 ]]; then printErrMsg "Not an interactive session." >&2; return 1; fi
-    local prompt="$1"; local header="$2"; shift 2; local -a options=("$@"); local num_options=${#options[@]}
-    if [[ $num_options -eq 0 ]]; then printErrMsg "No options provided to menu." >&2; return 1; fi
-    local current_option=0; local -a selected_options=(); for ((i=0; i<num_options; i++)); do selected_options[i]=0; done
+    local num_options=${#options[@]}; if [[ $num_options -eq 0 ]]; then printErrMsg "No options provided to menu." >&2; return 1; fi
+
+    local current_option=0; local -a selected_options=()
+    if [[ "$mode" == "multi" ]]; then for ((i=0; i<num_options; i++)); do selected_options[i]=0; done; fi
+
     local header_lines=0
-    if [[ -n "$header" ]]; then
-        header_lines=$(echo -e "$header" | wc -l)
-    fi
+    if [[ -n "$header" ]]; then header_lines=$(echo -e "$header" | wc -l); fi
+
     _draw_menu_options() {
-        local output=""; for i in "${!options[@]}"; do
-            local pointer=" "; local checkbox="[ ]"; local highlight_start=""; local highlight_end=""
-            if (( selected_options[i] == 1 )); then checkbox="${C_GREEN}${T_BOLD}[✓]${T_RESET}"; fi
-            if (( i == current_option )); then pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"; highlight_start="${T_REVERSE}"; highlight_end="${T_RESET}"; fi
-            output+=" ${pointer} ${highlight_start}${checkbox} ${options[i]}${highlight_end}${T_RESET}${T_CLEAR_LINE}\n"; done
-        echo -ne "$output"; }
+        local output=""
+        for i in "${!options[@]}"; do
+            local pointer=" "
+            local highlight_start=""
+            local highlight_end=""
+
+            if (( i == current_option )); then
+                # The current item gets the pointer and reverse-video highlight.
+                pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"
+                if [[ "$mode" == "single" ]]; then
+                    highlight_start="${T_REVERSE}${C_L_CYAN}"
+                else
+                    highlight_start="${T_REVERSE}"
+                fi
+                highlight_end="${T_RESET}"
+            elif [[ "$mode" == "multi" ]] && (( selected_options[i] == 1 )); then
+                # A selected (but not current) item in multi-select mode gets bolded.
+                highlight_start="${T_BOLD}"
+                highlight_end="${T_RESET}"
+            fi
+
+            if [[ "$mode" == "multi" ]]; then
+                local checkbox_text="[ ]"
+                local checkbox_style=""
+                if (( selected_options[i] == 1 )); then
+                    checkbox_text="[✓]"
+                    checkbox_style="${C_GREEN}${T_BOLD}"
+                fi
+                local option_text="${options[i]}"
+                
+                if [[ "${options[i]}" == "All" ]]; then
+                    # this is the "All" option,
+                    # pad it so that highlights take up most of the width
+                    option_text=$(printf "%-21s" "${options[i]}")
+                fi
+                # The highlight is applied to the whole line. The checkbox style is applied only to the checkbox.
+                # We reset the checkbox style before the option text, then re-apply the main highlight.
+                output+=" ${pointer} ${highlight_start}${checkbox_style}${checkbox_text}${T_RESET}${highlight_start} ${option_text}${highlight_end}${T_RESET}${T_CLEAR_LINE}\n"
+            else # single
+                output+=" ${pointer} ${highlight_start} ${options[i]} ${highlight_end}${T_RESET}${T_CLEAR_LINE}\n"
+            fi
+        done
+        echo -ne "$output"
+    }
+
+    # --- UI Rendering ---
     printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty; trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty' EXIT
     echo -e "${T_QST_ICON} ${prompt}" >/dev/tty; echo -e "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
-    if [[ -n "$header" ]]; then
-        echo -e "  ${header}${T_RESET}" >/dev/tty
-    fi
+    if [[ -n "$header" ]]; then echo -e "  ${header}${T_RESET}" >/dev/tty; fi
     _draw_menu_options >/dev/tty
     echo -e "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
-    echo -e "  ${C_L_CYAN}↓/↑${C_WHITE} Move | ${C_L_CYAN}SPACE${C_WHITE} to select | ${C_L_GREEN}ENTER${C_WHITE} to confirm | ${C_L_YELLOW}Q/ESC${C_GRAY} to cancel${T_RESET}" >/dev/tty
+
+    if [[ "$mode" == "multi" ]]; then
+        echo -e "  ${C_L_CYAN}↓/↑${C_WHITE} Move | ${C_L_CYAN}SPACE${C_WHITE} to select | ${C_L_GREEN}ENTER${C_WHITE} to confirm | ${C_L_YELLOW}Q/ESC${C_GRAY} to cancel${T_RESET}" >/dev/tty
+    else
+        echo -e "  ${C_L_CYAN}↓/↑/j/k${C_WHITE} Move | ${C_L_GREEN}SPACE/ENTER${C_WHITE} to confirm | ${C_L_YELLOW}Q/ESC${C_GRAY} to cancel${T_RESET}" >/dev/tty
+    fi
 
     move_cursor_up 2 # Move to end of options list
 
-    local key; local lines_above=$((2 + header_lines)); local lines_below=2; while true; do
+    # --- Input Loop ---
+    local key; local lines_above=$((2 + header_lines)); local lines_below=2
+    while true; do
         move_cursor_up "$num_options"; key=$(read_single_char </dev/tty)
         case "$key" in
             "$KEY_UP"|"k") current_option=$(( (current_option - 1 + num_options) % num_options ));;
             "$KEY_DOWN"|"j") current_option=$(( (current_option + 1) % num_options ));;
-            ' '|"h"|"l") selected_options[current_option]=$(( 1 - selected_options[current_option] ))
-                if [[ "${options[0]}" == "All" ]]; then
-                    if (( current_option == 0 )); then local all_state=${selected_options[0]}; for i in "${!options[@]}"; do selected_options[i]=$all_state; done
-                    else local all_selected=1; for ((i=1; i<num_options; i++)); do if (( selected_options[i] == 0 )); then all_selected=0; break; fi; done; selected_options[0]=$all_selected; fi
-                fi;;
-            "$KEY_ENTER"|"$KEY_ESC"|"q")
+            "$KEY_ESC"|"q") clear_lines_down $((num_options + lines_below)); clear_lines_up "$lines_above"; return 1;;
+            "$KEY_ENTER")
                 clear_lines_down $((num_options + lines_below)); clear_lines_up "$lines_above"
-                if [[ "$key" == "$KEY_ENTER" ]]; then
-                    break
-                else
-                    return 1
-                fi;;
+                if [[ "$mode" == "multi" ]]; then
+                    local has_selection=0
+                    for i in "${!options[@]}"; do if [[ ${selected_options[i]} -eq 1 ]]; then has_selection=1; echo "$i"; fi; done
+                    if [[ $has_selection -eq 1 ]]; then return 0; else return 1; fi
+                else # single
+                    echo "$current_option"; return 0
+                fi
+                ;;
+            ' ')
+                if [[ "$mode" == "multi" ]]; then
+                    # In multi-select, SPACE toggles, only ENTER confirms.
+                    selected_options[current_option]=$(( 1 - selected_options[current_option] ))
+                    if [[ "${options[0]}" == "All" ]]; then
+                        if (( current_option == 0 )); then local all_state=${selected_options[0]}; for i in "${!options[@]}"; do selected_options[i]=$all_state; done
+                        else local all_selected=1; for ((i=1; i<num_options; i++)); do if (( selected_options[i] == 0 )); then all_selected=0; break; fi; done; selected_options[0]=$all_selected; fi
+                    fi
+                else # single mode: space selects and exits
+                    clear_lines_down $((num_options + lines_below)); clear_lines_up "$lines_above"
+                    echo "$current_option"; return 0
+                fi
+                ;;
         esac; _draw_menu_options >/dev/tty; done
-    local has_selection=0; for i in "${!options[@]}"; do if [[ ${selected_options[i]} -eq 1 ]]; then has_selection=1; echo "$i"; fi; done
-    if [[ $has_selection -eq 1 ]]; then return 0; else return 1; fi
+}
+
+interactive_multi_select_menu() {
+    local prompt="$1"; local header="$2"; shift 2
+    _interactive_menu "multi" "$prompt" "$header" "$@"
 }
 
 interactive_single_select_menu() {
-    if ! [[ -t 0 ]]; then printErrMsg "Not an interactive session." >&2; return 1; fi
-    local prompt="$1"; local header="$2"; shift 2; local -a options=("$@"); local num_options=${#options[@]}
-    if [[ $num_options -eq 0 ]]; then printErrMsg "No options provided to menu." >&2; return 1; fi
-    local current_option=0
-    local header_lines=0
-    if [[ -n "$header" ]]; then
-        # Count newlines in header to correctly calculate menu height for clearing.
-        header_lines=$(echo -e "$header" | wc -l)
-    fi
-
-    _draw_menu_options() {
-        local output=""; for i in "${!options[@]}"; do
-            local pointer=" "; local highlight_start=""; local highlight_end=""
-            if (( i == current_option )); then pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"; highlight_start="${T_REVERSE}${C_L_CYAN}"; highlight_end="${T_RESET}"; fi
-            output+=" ${pointer} ${highlight_start} ${options[i]} ${highlight_end}${T_RESET}${T_CLEAR_LINE}\n"; done
-        echo -ne "$output"; }
-    printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty; trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty' EXIT
-    echo -e "${T_QST_ICON} ${prompt}" >/dev/tty; echo -e "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
-    if [[ -n "$header" ]]; then
-        echo -e "  ${header}${T_RESET}" >/dev/tty
-    fi
-    _draw_menu_options >/dev/tty
-    echo -e "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
-    #echo -e "${C_GRAY}(Use ${C_L_CYAN}↓/↑${C_GRAY} to navigate, ${C_L_GREEN}enter${C_GRAY} to confirm, ${C_L_YELLOW}q/esc${C_GRAY} to cancel)${T_RESET}" >/dev/tty
-    echo -e "  ${C_L_CYAN}↓/↑/j/k${C_WHITE} Move | ${C_L_GREEN}ENTER${C_WHITE} to confirm, ${C_L_YELLOW}Q/ESC${C_GRAY} to cancel${T_RESET}" >/dev/tty
-
-    move_cursor_up 2 # Move to end of options list
-
-    local key; local lines_above=$((2 + header_lines)); local lines_below=2; while true; do
-        move_cursor_up "$num_options"; key=$(read_single_char </dev/tty)
-        case "$key" in
-            "$KEY_UP"|"k") current_option=$(( (current_option - 1 + num_options) % num_options ));;
-            "$KEY_DOWN"|"j") current_option=$(( (current_option + 1) % num_options ));;
-            "$KEY_ENTER") clear_lines_down $((num_options + lines_below)); clear_lines_up "$lines_above"; echo "$current_option"; return 0;;
-            "$KEY_ESC"|"q") clear_lines_down $((num_options + lines_below)); clear_lines_up "$lines_above"; return 1;;
-        esac; _draw_menu_options >/dev/tty; done
+    local prompt="$1"; local header="$2"; shift 2
+    _interactive_menu "single" "$prompt" "$header" "$@"
 }
 
 interactive_reorder_menu() {
