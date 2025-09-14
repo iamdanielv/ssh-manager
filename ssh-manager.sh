@@ -838,10 +838,10 @@ generate_ssh_key() {
 
     local key_type_selection="${key_types[$selected_index]}"
     local key_type="ed25519" # Default
-    local key_bits_arg=""
+    local -a key_bits_args=()
     if [[ "$key_type_selection" == "rsa (legacy, 4096 bits)" ]]; then
         key_type="rsa"
-        key_bits_arg="-b 4096"
+        key_bits_args=("-b" "4096")
     fi
 
     local key_filename
@@ -859,7 +859,7 @@ generate_ssh_key() {
     prompt_for_input "Enter a comment for the key" key_comment "${USER}@$(hostname)" || return
 
     if run_with_spinner "Generating new ${key_type} key..." \
-        ssh-keygen -t "${key_type}" ${key_bits_arg} -f "${full_key_path}" -N "" -C "${key_comment}"; then
+        ssh-keygen -t "${key_type}" "${key_bits_args[@]}" -f "${full_key_path}" -N "" -C "${key_comment}"; then
         printInfoMsg "Key pair created:"
         printMsg "  Private key: ${C_L_BLUE}${full_key_path}${T_RESET}"
         printMsg "  Public key:  ${C_L_BLUE}${full_key_path}.pub${T_RESET}"
@@ -1600,6 +1600,7 @@ edit_ssh_host_in_editor() {
 }
 
 # Clones an existing SSH host configuration to a new alias using an interactive UI.
+# shellcheck disable=SC2120
 clone_ssh_host() {
     local host_to_clone="$1"
     if [[ -z "$host_to_clone" ]]; then
@@ -1892,7 +1893,6 @@ import_ssh_hosts() {
     local imported_count=0 overwritten_count=0 skipped_count=0
 
     for host in "${hosts_to_import[@]}"; do
-        local should_add=false
         if grep -q -E "^\s*Host\s+${host}\s*$" "$SSH_CONFIG_PATH"; then
             prompt_yes_no "Host '${host}' already exists. Overwrite it?" "n"
             local choice=$?
@@ -2702,7 +2702,7 @@ interactive_server_management_view() {
         "_server_view_draw_footer"
 }
 
---- Key Management View Helpers ---
+# --- Key Management View Helpers ---
 
 _key_view_draw_header() {
     local header; header=$(printf " %-25s %-10s %-6s %s" "KEY FILENAME" "TYPE" "BITS" "COMMENT")
