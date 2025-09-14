@@ -7,42 +7,41 @@ set -o pipefail
 # --- Shared Utilities ---
 
 #region Colors and Styles
-export C_RED='\e[31m'
-export C_GREEN='\e[32m'
-export C_YELLOW='\e[33m'
-export C_BLUE='\e[34m'
-export C_MAGENTA='\e[35m'
-export C_CYAN='\e[36m'
-export C_WHITE='\e[37m'
-export C_GRAY='\e[38;5;244m'
-export C_L_RED='\e[31;1m'
-export C_L_GREEN='\e[32;1m'
-export C_L_YELLOW='\e[33;1m'
-export C_L_BLUE='\e[34;1m'
-export C_L_MAGENTA='\e[35;1m'
-export C_L_CYAN='\e[36;1m'
-export C_L_WHITE='\e[37;1m'
-export C_L_GRAY='\e[38;5;252m'
+export C_RED=$'\033[31m'
+export C_GREEN=$'\033[32m'
+export C_YELLOW=$'\033[33m'
+export C_BLUE=$'\033[34m'
+export C_MAGENTA=$'\033[35m'
+export C_CYAN=$'\033[36m'
+export C_WHITE=$'\033[37m'
+export C_GRAY=$'\033[38;5;244m'
+export C_L_RED=$'\033[31;1m'
+export C_L_GREEN=$'\033[32;1m'
+export C_L_YELLOW=$'\033[33;1m'
+export C_L_BLUE=$'\033[34m'
+export C_L_MAGENTA=$'\033[35m'
+export C_L_CYAN=$'\033[36;1m'
+export C_L_WHITE=$'\033[37;1m'
+export C_L_GRAY=$'\033[38;5;252m'
 
 # Background Colors
-export BG_BLACK='\e[40;1m'
-export BG_RED='\e[41;1m'
-export BG_GREEN='\e[42;1m'
-export BG_YELLOW='\e[43;1m'
-export BG_BLUE='\e[44;1m'
+export BG_BLACK=$'\033[40;1m'
+export BG_RED=$'\033[41m'
+export BG_GREEN=$'\033[42;1m'
+export BG_YELLOW=$'\033[43;1m'
+export BG_BLUE=$'\033[44m'
 
-# Text Colors
-export C_BLACK='\e[30;1m'
+export C_BLACK=$'\033[30;1m'
 
-export T_RESET='\e[0m'
-export T_BOLD='\e[1m'
-export T_ULINE='\e[4m'
-export T_REVERSE='\e[7m'
-export T_CLEAR_LINE='\e[K'
-export T_CURSOR_HIDE='\e[?25l'
-export T_CURSOR_SHOW='\e[?25h'
+export T_RESET=$'\033[0m'
+export T_BOLD=$'\033[1m'
+export T_ULINE=$'\033[4m'
+export T_REVERSE=$'\033[7m'
+export T_CLEAR_LINE=$'\033[K'
+export T_CURSOR_HIDE=$'\033[?25l'
+export T_CURSOR_SHOW=$'\033[?25h'
 
-export T_ERR="${T_BOLD}\e[31;1m"
+export T_ERR="${T_BOLD}${C_L_RED}"
 export T_ERR_ICON="[${T_BOLD}${C_RED}✗${T_RESET}]"
 
 export T_OK_ICON="[${T_BOLD}${C_GREEN}✓${T_RESET}]"
@@ -54,17 +53,17 @@ export T_QST_ICON="[${T_BOLD}${C_L_CYAN}?${T_RESET}]"
 export DIV="──────────────────────────────────────────────────────────────────────"
 
 #region Key Codes
-export KEY_ESC=$'\e'
-export KEY_UP=$'\e[A'
-export KEY_DOWN=$'\e[B'
-export KEY_RIGHT=$'\e[C'
-export KEY_LEFT=$'\e[D'
+export KEY_ESC=$'\033'
+export KEY_UP=$'\033[A'
+export KEY_DOWN=$'\033[B'
+export KEY_RIGHT=$'\033[C'
+export KEY_LEFT=$'\033[D'
 export KEY_ENTER="ENTER"
 export KEY_TAB=$'\t'
 export KEY_BACKSPACE=$'\x7f' # ASCII DEL character for backspace
-export KEY_HOME=$'\e[H'
-export KEY_END=$'\e[F'
-export KEY_DELETE=$'\e[3~'
+export KEY_HOME=$'\033[H'
+export KEY_END=$'\033[F'
+export KEY_DELETE=$'\033[3~'
 #endregion Key Codes
 
 #region Logging & Banners
