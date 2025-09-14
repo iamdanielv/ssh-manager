@@ -1016,13 +1016,11 @@ prompt_for_input() {
 
         case "$key" in
             "$KEY_ENTER")
-                # The final value is whatever is in the input buffer.
-                local final_input="$input_str"
-                if [[ -n "$final_input" || "$allow_empty" == "true" ]]; then
-                    var_ref="$final_input"
+                if [[ -n "$input_str" || "$allow_empty" == "true" ]]; then
+                    var_ref="$input_str"
                     clear_current_line >/dev/tty
                     # Show the prompt again with the final selected value.
-                    printMsg "${T_QST_ICON} ${prompt_text}: ${C_L_GREEN}${final_input}${T_RESET}"
+                    printMsg "${T_QST_ICON} ${prompt_text}: ${C_L_GREEN}${var_ref}${T_RESET}"
                     return 0 # Success
                 fi
                 # If not valid (empty and not allowed), loop continues.
@@ -1315,6 +1313,7 @@ add_ssh_host() {
     # --- Step 2: Handle choice ---
     if [[ "${add_options[$add_choice_idx]}" == "Clone settings from an existing host" ]]; then
         # Delegate to the dedicated clone function.
+        # shellcheck disable=SC2119
         clone_ssh_host
         return
     fi
