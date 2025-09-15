@@ -175,7 +175,7 @@ prompt_yes_no() {
     fi
 
     while true; do
-        printMsgNoNewline "${T_QST_ICON} ${question} ${prompt_suffix} "
+        printf '%b' "${T_QST_ICON} ${question} ${prompt_suffix} "
         answer=$(read_single_char)
         
         # If the answer is the ENTER key, use the default.
@@ -194,7 +194,8 @@ prompt_yes_no() {
                 ;;
             "$KEY_ESC"|"q")
                 clear_current_line
-                printMsg "${T_QST_ICON} ${question} ${prompt_suffix}\n ${C_L_YELLOW}-- cancelled --${T_RESET}"
+                # Don't re-print the (potentially multi-line) question. Just show it was cancelled.
+                printMsg " ${C_L_YELLOW}-- cancelled --${T_RESET}"
                 return 2 # Cancelled
                 ;;
             *)
@@ -1071,7 +1072,7 @@ prompt_for_input() {
                 ;;
             "$KEY_ESC")
                 clear_current_line >/dev/tty
-                printMsg "${T_QST_ICON} ${prompt_text}:\n ${C_L_YELLOW}-- cancelled --${T_RESET}"
+                printf '%b\n' "${T_QST_ICON} ${prompt_text}:"$'\n'" ${C_L_YELLOW}-- cancelled --${T_RESET}" >/dev/tty
                 return 1 # Cancelled
                 ;;
             "$KEY_BACKSPACE")
