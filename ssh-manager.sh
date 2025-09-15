@@ -1398,13 +1398,17 @@ _interactive_host_editor_loop() {
     # Original values are passed by value for comparison.
     local original_alias="$8" original_hostname="$9" original_user="${10}" original_port="${11}" original_identityfile="${12}"
 
-    while true; do
-        clear
-        printBanner "$banner_text"
-        _draw_interactive_host_editor_ui "$mode" "$n_alias" "$n_hostname" "$n_user" "$n_port" "$n_identityfile" \
-                                         "$original_alias" "$original_hostname" "$original_user" "$original_port" "$original_identityfile"
+    # Initial draw
+    clear
+    printBanner "$banner_text"
+    _draw_interactive_host_editor_ui "$mode" "$n_alias" "$n_hostname" "$n_user" "$n_port" "$n_identityfile" \
+                                     "$original_alias" "$original_hostname" "$original_user" "$original_port" "$original_identityfile"
 
+    while true; do
         local key; key=$(read_single_char)
+        # Default to redrawing after any action, except for ignored keys.
+        local needs_redraw=true
+
         case "$key" in
             '1')
                 # Edit Alias
@@ -1426,7 +1430,8 @@ _interactive_host_editor_loop() {
                 if prompt_yes_no "$question" "y"; then
                     n_alias="$original_alias"; n_hostname="$original_hostname"; n_user="$original_user"; n_port="$original_port"; n_identityfile="$original_identityfile"
                     printInfoMsg "Changes discarded."; sleep 1
-                fi ;;
+                fi
+                ;;
             's'|'S') return 0 ;; # Signal to Save
             'q'|'Q'|"$KEY_ESC")
                 # Quit
@@ -1438,8 +1443,21 @@ _interactive_host_editor_loop() {
                     fi
                 else
                     return 1 # No changes, just quit
-                fi ;;
+                fi
+                ;;
+            *)
+                # Any other key is ignored and does not trigger a redraw.
+                needs_redraw=false
+                ;;
         esac
+
+        # Redraw the screen if any action that might have changed data or dirtied the screen was taken.
+        if [[ "$needs_redraw" == "true" ]]; then
+            clear
+            printBanner "$banner_text"
+            _draw_interactive_host_editor_ui "$mode" "$n_alias" "$n_hostname" "$n_user" "$n_port" "$n_identityfile" \
+                                             "$original_alias" "$original_hostname" "$original_user" "$original_port" "$original_identityfile"
+        fi
     done
 }
 
