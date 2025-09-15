@@ -2600,7 +2600,27 @@ _port_forward_view_key_handler() {
             ;;
         'a'|'A') run_menu_action "add_saved_port_forward"; out_result="refresh" ;;
         'e'|'E') if [[ -n "$selected_payload" ]]; then run_menu_action "edit_saved_port_forward" "$idx"; out_result="refresh"; fi ;;
-        'd'|'D') if [[ -n "$selected_payload" ]]; then run_menu_action "delete_saved_port_forward" "$idx" "$type" "$spec" "$host"; out_result="refresh"; fi ;;
+        'd'|'D')
+            if [[ -n "$selected_payload" ]]; then
+                # Move cursor down past the list and its top divider.
+                printf '\n' >/dev/tty
+                # The area to clear is the 2 lines of footer text + 1 bottom divider line.
+                local lines_to_clear=3
+                clear_lines_down "$lines_to_clear" >/dev/tty
+
+                # Show the prompt in the cleared footer area.
+                printBanner "${C_RED}Delete / Remove Port Forward${T_RESET}"
+                if prompt_yes_no "Permanently ${C_RED}delete${T_RESET} saved forward\n     '${spec}' on '${host}'?" "n"; then
+                    local -a all_types all_specs all_hosts all_descs; _get_saved_port_forwards all_types all_specs all_hosts all_descs
+                    local -a new_types new_specs new_hosts new_descs
+                    for i in "${!all_types[@]}"; do
+                        if [[ "$i" -ne "$idx" ]]; then new_types+=("${all_types[i]}"); new_specs+=("${all_specs[i]}"); new_hosts+=("${all_hosts[i]}"); new_descs+=("${all_descs[i]}"); fi
+                    done
+                    _save_all_port_forwards new_types new_specs new_hosts new_descs
+                    printOkMsg "Deleted saved port forward."; sleep 1
+                fi
+                out_result="refresh"
+            fi ;;
         'c'|'C') if [[ -n "$selected_payload" ]]; then run_menu_action "clone_saved_port_forward" "$type" "$spec" "$host" "$desc"; out_result="refresh"; fi ;;
         "$KEY_ENTER")
             if [[ -n "$selected_payload" ]]; then
@@ -2613,7 +2633,7 @@ _port_forward_view_key_handler() {
 
 interactive_port_forward_view() {
     _interactive_list_view \
-        "Active Port Forwards" \
+        "Saved Port Forwards" \
         "_port_forward_view_draw_header" \
         "_port_forward_view_refresh" \
         "_port_forward_view_key_handler" \
