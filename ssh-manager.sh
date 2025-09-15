@@ -2783,6 +2783,7 @@ _server_view_key_handler() {
 
                 # The cursor is now at the start of where the footer text was.
                 # Show the prompt here.
+                printBanner "Connect to Host"
                 if prompt_yes_no "Connect to '${selected_host}'?" "y"; then
                     clear; exec ssh "$selected_host"
                 else
