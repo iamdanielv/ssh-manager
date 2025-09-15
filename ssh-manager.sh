@@ -3026,6 +3026,7 @@ _key_view_key_handler() {
 
                 # Build the multi-line question for the prompt.
                 local pub_key_path="${selected_key_path}.pub"
+                printBanner "${C_RED}Delete Key${T_RESET}"
                 local question="Are you sure you want to permanently delete this key pair?\n     Private: ${selected_key_path/#$HOME/\~}"
                 if [[ -f "$pub_key_path" ]]; then question+="\n     Public:  ${pub_key_path/#$HOME/\~}"; fi
 
