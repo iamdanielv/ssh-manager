@@ -433,13 +433,16 @@ _interactive_list_view() {
             for i in "${!menu_options[@]}"; do
                 if (( i == current_option )); then
                     local pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"
-                    printMsg " ${pointer} ${T_REVERSE}${menu_options[i]}${T_RESET}"
+                    local selected_line="${menu_options[i]}"
+                    selected_line="${selected_line/${T_REVERSE}/''}"
+                    selected_line="${selected_line/${T_RESET}/${T_RESET}${T_REVERSE}}"
+                    printMsg " ${pointer} ${T_REVERSE}${selected_line}${T_CLEAR_LINE}${T_RESET}"
                 else
-                    printMsg "   ${menu_options[i]}${T_RESET}"
+                    printMsg "   ${menu_options[i]}${T_CLEAR_LINE}${T_RESET}"
                 fi
             done
         else
-            printMsg "  ${C_GRAY}(No items found.)${T_RESET}"
+            printMsg "  ${C_GRAY}(No items found.)${T_CLEAR_LINE}${T_RESET}"
         fi
 
         printMsg "${C_GRAY}${DIV}${T_RESET}"
@@ -863,9 +866,9 @@ copy_ssh_id_for_host() {
     fi
 }
 
-# Generates a new SSH key pair without associating it with a host.
+# Adds a new SSH key pair without associating it with a host.
 generate_ssh_key() {
-    printBanner "Generate New SSH Key"
+    printBanner "Add New SSH Key"
 
     local -a key_types=("ed25519 (recommended)" "rsa (legacy, 4096 bits)")
     local selected_index
@@ -2788,7 +2791,7 @@ _key_view_draw_header() {
 
 _key_view_draw_footer() {
     printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC${T_RESET} Back"
-    printMsg "  ${T_BOLD}Key Actions:${T_RESET}  (${C_L_GREEN}G${T_RESET})enerate | (${C_L_RED}D${T_RESET})elete | (${C_L_CYAN}R${T_RESET})ename"
+    printMsg "  ${T_BOLD}Key Actions:${T_RESET}  (${C_L_GREEN}A${T_RESET})dd Key | (${C_L_RED}D${T_RESET})elete | (${C_L_CYAN}R${T_RESET})ename"
     printMsg "                (${C_L_CYAN}V${T_RESET})iew public | (${C_L_CYAN}C${T_RESET})opy | Re-gen (${C_L_CYAN}P${T_RESET})ublic"
 }
 
@@ -2822,7 +2825,8 @@ _key_view_refresh() {
             local key_type key_bits key_comment
             read -r key_type key_bits key_comment <<< "$details_str"
             local formatted_string
-            formatted_string=$(printf "%-25s %-10s %-6s %s" "${filename}" "${key_type}" "${key_bits}" "${key_comment}")
+            # formatted_string=$(printf "${C_MAGENTA}%-25s${T_RESET} ${C_YELLOW}%-10s${T_RESET} %-6s %-23s" "${filename}" "${key_type}" "${key_bits}" "${key_comment}")
+            formatted_string=$(printf "${C_MAGENTA}%-25s ${C_YELLOW}%-10s ${C_WHITE}%-6s %-23s" "${filename}" "${key_type}" "${key_bits}" "${key_comment}")
             out_menu_options+=("$formatted_string")
         fi
     done < <(find "$SSH_DIR" -maxdepth 1 -type f ! -name "*.pub")
@@ -2844,7 +2848,7 @@ _key_view_key_handler() {
         "$KEY_DOWN"|"j")
             if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref + 1) % num_options )); fi
             ;;
-        'g'|'G')
+        'a'|'A')
             run_menu_action "generate_ssh_key"; out_result="refresh" ;;
         'c'|'C')
             if [[ -n "$selected_key_path" ]]; then
@@ -2879,7 +2883,7 @@ interactive_key_management_view() {
 key_menu() {
     local -a menu_definition=(
         "Copy an SSH key to a server" "copy_ssh_id"
-        "Generate a new SSH key"      "generate_ssh_key"
+        "Add a new SSH key"           "generate_ssh_key"
     )
     _run_submenu "Key Management" "${menu_definition[@]}"
 }
