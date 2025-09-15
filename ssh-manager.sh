@@ -2880,14 +2880,6 @@ interactive_key_management_view() {
         "_key_view_draw_footer"
 }
 
-key_menu() {
-    local -a menu_definition=(
-        "Copy an SSH key to a server" "copy_ssh_id"
-        "Add a new SSH key"           "generate_ssh_key"
-    )
-    _run_submenu "Key Management" "${menu_definition[@]}"
-}
-
 advanced_menu() {
     local -a menu_definition=(
         "Open SSH config in editor"      "SPECIAL_EDIT_CONFIG"
