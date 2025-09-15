@@ -2829,7 +2829,7 @@ _key_view_draw_header() {
 _key_view_draw_footer() {
     printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC${T_RESET} Back"
     printMsg "  ${T_BOLD}Key Actions:${T_RESET}  (${C_L_GREEN}A${T_RESET})dd Key | (${C_L_RED}D${T_RESET})elete | (${C_L_CYAN}R${T_RESET})ename"
-    printMsg "                (${C_L_CYAN}V${T_RESET})iew public | (${C_L_CYAN}C${T_RESET})opy | Re-gen (${C_L_CYAN}P${T_RESET})ublic"
+    printMsg "                (${C_L_CYAN}V${T_RESET})iew public | (${C_L_CYAN}C${T_RESET})opy to Server | Re-gen (${C_L_CYAN}P${T_RESET})ublic"
 }
 
 # (Private) Verifies a file is a valid private key and extracts its details.
@@ -2889,8 +2889,14 @@ _key_view_key_handler() {
             run_menu_action "generate_ssh_key"; out_result="refresh" ;;
         'c'|'C')
             if [[ -n "$selected_key_path" ]]; then
-                if [[ -f "${selected_key_path}.pub" ]]; then run_menu_action "copy_selected_ssh_key" "${selected_key_path}.pub";
-                else printErrMsg "Public key for '${selected_key_path/#$HOME/\~}' not found."; prompt_to_continue; fi
+                if [[ -f "${selected_key_path}.pub" ]]; then
+                    run_menu_action "copy_selected_ssh_key" "${selected_key_path}.pub"
+                else
+                    # This path doesn't use run_menu_action, so we handle the UI manually.
+                    clear; printErrMsg "Public key for '${selected_key_path/#$HOME/\~}' not found."; prompt_to_continue
+                fi
+                # In either case, the screen was cleared, so a full refresh is needed.
+                out_result="refresh"
             fi ;;
         'd'|'D')
             if [[ -n "$selected_key_path" ]]; then
@@ -2922,11 +2928,15 @@ _key_view_key_handler() {
             if [[ -n "$selected_key_path" ]]; then run_menu_action "rename_ssh_key" "$selected_key_path"; out_result="refresh"; fi ;;
         'v'|'V')
             if [[ -n "$selected_key_path" ]]; then
-                if [[ -f "${selected_key_path}.pub" ]]; then run_menu_action "view_public_key" "${selected_key_path}.pub";
-                else printErrMsg "Public key for '${selected_key_path/#$HOME/\~}' not found."; prompt_to_continue; fi
+                if [[ -f "${selected_key_path}.pub" ]]; then
+                    run_menu_action "view_public_key" "${selected_key_path}.pub"
+                else
+                    clear; printErrMsg "Public key for '${selected_key_path/#$HOME/\~}' not found."; prompt_to_continue
+                fi
+                out_result="refresh"
             fi ;;
         'p'|'P')
-            if [[ -n "$selected_key_path" ]]; then run_menu_action "regenerate_public_key" "$selected_key_path"; fi ;;
+            if [[ -n "$selected_key_path" ]]; then run_menu_action "regenerate_public_key" "$selected_key_path"; out_result="refresh"; fi ;;
         "$KEY_ESC"|"q"|"Q")
             out_result="exit" ;; # Exit view
     esac
