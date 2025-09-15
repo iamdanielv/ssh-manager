@@ -400,72 +400,77 @@ interactive_reorder_menu() {
 #                       "noop" - redraw, "refresh" - reload data, "exit" - close the view.
 #   - footer_func: The name of a function that prints the help text at the bottom.
 _interactive_list_view() {
-    local banner="$1"
-    local header_func="$2"
-    local refresh_func="$3"
-    local key_handler_func="$4"
-    local footer_func="$5"
+    local banner="$1" header_func="$2" refresh_func="$3" key_handler_func="$4" footer_func="$5"
 
     printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty
     trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty' RETURN
 
-    local current_option=0
-    local -a menu_options=()
-    local -a data_payloads=()
-    local num_options=0
+    local current_option=0; local -a menu_options=(); local -a data_payloads=(); local num_options=0
+    local list_lines=0; local footer_lines=0
 
     # (Private) Fetches data and clamps the selection index.
     _refresh_data() {
-        "$refresh_func" menu_options data_payloads
-        num_options=${#menu_options[@]}
+        "$refresh_func" menu_options data_payloads; num_options=${#menu_options[@]}
         if (( current_option >= num_options )); then current_option=$(( num_options - 1 )); fi
         if (( current_option < 0 )); then current_option=0; fi
+        # Calculate how many lines the list will render.
+        list_lines=0
+        if (( num_options > 0 )); then
+            for item in "${menu_options[@]}"; do list_lines=$(( list_lines + $(echo -e "$item" | wc -l) )); done
+        else
+            list_lines=1 # For "(No items found.)"
+        fi
     }
 
-    # (Private) Draws the entire UI.
-    _draw_view() {
-        clear
-        printBanner "$banner"
-        "$header_func"
-        printMsg "${C_GRAY}${DIV}${T_RESET}"
-
+    # (Private) Draws only the list portion of the UI.
+    _draw_list() {
         if [[ $num_options -gt 0 ]]; then
             for i in "${!menu_options[@]}"; do
                 if (( i == current_option )); then
                     local pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"
                     local selected_line="${menu_options[i]}"
-                    selected_line="${selected_line/${T_REVERSE}/''}"
-                    selected_line="${selected_line/${T_RESET}/${T_RESET}${T_REVERSE}}"
+                    selected_line="${selected_line/${T_REVERSE}/''}"; selected_line="${selected_line/${T_RESET}/${T_RESET}${T_REVERSE}}"
                     printMsg " ${pointer} ${T_REVERSE}${selected_line}${T_CLEAR_LINE}${T_RESET}"
-                else
-                    printMsg "   ${menu_options[i]}${T_CLEAR_LINE}${T_RESET}"
-                fi
+                else printMsg "   ${menu_options[i]}${T_CLEAR_LINE}${T_RESET}"; fi
             done
-        else
-            printMsg "  ${C_GRAY}(No items found.)${T_CLEAR_LINE}${T_RESET}"
-        fi
+        else printMsg "  ${C_GRAY}(No items found.)${T_CLEAR_LINE}${T_RESET}"; fi
+    }
 
+    # (Private) Draws the entire UI from scratch.
+    _draw_full_view() {
+        clear; printBanner "$banner"; "$header_func"; printMsg "${C_GRAY}${DIV}${T_RESET}"; _draw_list
         printMsg "${C_GRAY}${DIV}${T_RESET}"
-        "$footer_func"
+        local footer_content; footer_content=$("$footer_func")
+        footer_lines=$(echo -e "$footer_content" | wc -l)
+        printMsg "$footer_content"
         printMsg "${C_GRAY}${DIV}${T_RESET}"
     }
 
     _refresh_data # Initial data load
-    while true; do
-        _draw_view
-        local key; key=$(read_single_char)
-        local selected_payload=""; if (( num_options > 0 )); then selected_payload="${data_payloads[$current_option]}"; fi
+    _draw_full_view
 
-        # Delegate ALL key handling to the specific view's handler.
-        local handler_result="noop"
+    # Position cursor for the loop: at the end of the list, before the first bottom divider.
+    local lines_below_list=$(( footer_lines + 2 ))
+    move_cursor_up "$lines_below_list"
+
+    while true; do
+        # At this point, the cursor is at the end of the list content.
+        # We move up to the start of the list, redraw it, and the cursor will be back at the end of the list.
+        move_cursor_up "$list_lines"
+        _draw_list
+
+        local key; key=$(read_single_char); local selected_payload=""; if (( num_options > 0 )); then selected_payload="${data_payloads[$current_option]}"; fi
+        local handler_result="noop" # Default action is a no-op (redraw list)
         "$key_handler_func" "$key" "$selected_payload" "$current_option" current_option "$num_options" handler_result
 
         if [[ "$handler_result" == "refresh" ]]; then
-            _refresh_data
+            _refresh_data; _draw_full_view
+            # After a full redraw, we need to reposition the cursor again for the next loop iteration.
+            lines_below_list=$(( footer_lines + 2 ))
+            move_cursor_up "$lines_below_list"
         elif [[ "$handler_result" == "exit" ]]; then
-            break
+            clear; break
         fi
-        # "noop" does nothing and the loop continues, redrawing the view.
     done
 }
 #endregion User Input
@@ -2759,8 +2764,24 @@ _server_view_key_handler() {
             if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref + 1) % num_options )); fi
             ;;
         "$KEY_ENTER")
-            if [[ -n "$selected_host" ]] && prompt_yes_no "Connect to '${selected_host}'?" "y"; then
-                clear; exec ssh "$selected_host"
+            if [[ -n "$selected_host" ]]; then
+                # The cursor is at the end of the list content.
+                # Move down one line to be past the top divider.
+                printf '\n' >/dev/tty
+
+                # The area to clear is the 4 lines of footer text + 1 bottom divider line.
+                local lines_to_clear=5
+                clear_lines_down "$lines_to_clear" >/dev/tty
+
+                # The cursor is now at the start of where the footer text was.
+                # Show the prompt here.
+                if prompt_yes_no "Connect to '${selected_host}'?" "y"; then
+                    clear; exec ssh "$selected_host"
+                else
+                    # User cancelled. The prompt prints a cancellation message.
+                    # Trigger a full redraw to restore the footer and clean up.
+                    out_result="refresh"
+                fi
             fi ;;
         'a'|'A') run_menu_action "add_ssh_host"; out_result="refresh" ;;
         'e') if [[ -n "$selected_host" ]]; then run_menu_action "edit_ssh_host" "$selected_host"; out_result="refresh"; fi ;;
