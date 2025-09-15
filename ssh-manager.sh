@@ -2783,7 +2783,6 @@ _server_view_key_handler() {
 
                 # The cursor is now at the start of where the footer text was.
                 # Show the prompt here.
-                printBanner "Connect to Host"
                 if prompt_yes_no "Connect to '${selected_host}'?" "y"; then
                     clear; exec ssh "$selected_host"
                 else
@@ -2795,7 +2794,39 @@ _server_view_key_handler() {
         'a'|'A') run_menu_action "add_ssh_host"; out_result="refresh" ;;
         'e') if [[ -n "$selected_host" ]]; then run_menu_action "edit_ssh_host" "$selected_host"; out_result="refresh"; fi ;;
         'E') if [[ -n "$selected_host" ]]; then run_menu_action "edit_ssh_host_in_editor" "$selected_host"; out_result="refresh"; fi ;;
-        'd'|'D') if [[ -n "$selected_host" ]]; then run_menu_action "remove_ssh_host" "$selected_host"; out_result="refresh"; fi ;;
+        'd'|'D')
+            if [[ -n "$selected_host" ]]; then
+                # Move cursor down past the list and its top divider.
+                printf '\n' >/dev/tty
+                # The area to clear is the 4 lines of footer text + 1 bottom divider line.
+                local lines_to_clear=5
+                clear_lines_down "$lines_to_clear" >/dev/tty
+
+                # Show the prompt in the cleared footer area.
+                printBanner "${C_RED}Delete / Remove Host${T_RESET}"
+                if prompt_yes_no "Are you sure you want to ${C_RED}remove${T_RESET} '${selected_host}'?\n    This will permanently delete the host from your config." "n"; then
+                    # User confirmed deletion.
+                    # Get the IdentityFile path *before* removing the host from the config.
+                    local identity_file_to_check
+                    identity_file_to_check=$(_get_explicit_ssh_config_value "$selected_host" "IdentityFile")
+
+                    # Get the config content without the specified host block
+                    local new_config_content
+                    new_config_content=$(_remove_host_block_from_config "$selected_host")
+
+                    # Overwrite the config file with the new content, squeezing blank lines
+                    echo "$new_config_content" | cat -s > "$SSH_CONFIG_PATH"
+                    printOkMsg "Host '${selected_host}' has been removed."
+
+                    # Now, handle the potentially orphaned key in the same interactive space.
+                    _cleanup_orphaned_key "$identity_file_to_check"
+                    sleep 1 # Give user a moment to see the result.
+                fi
+                # Whether confirmed or cancelled, trigger a full redraw to restore the UI.
+                # The prompt_yes_no function prints a cancellation message if needed.
+                out_result="refresh"
+            fi
+            ;;
         'c'|'C') if [[ -n "$selected_host" ]]; then run_menu_action "clone_ssh_host" "$selected_host"; out_result="refresh"; fi ;;
         't')
             if [[ -n "$selected_host" ]]; then
