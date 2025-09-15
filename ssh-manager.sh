@@ -872,16 +872,12 @@ copy_ssh_id_for_host() {
     fi
 }
 
-# Adds a new SSH key pair without associating it with a host.
-generate_ssh_key() {
-    printBanner "Add New SSH Key"
+# (Private) Continues the key generation process after a type has been selected.
+# This is designed to be called from the interactive view or the full-screen wizard.
+# Usage: _generate_ssh_key_from_type "ed25519 (recommended)"
+_generate_ssh_key_from_type() {
+    local key_type_selection="$1"
 
-    local -a key_types=("ed25519 (recommended)" "rsa (legacy, 4096 bits)")
-    local selected_index
-    selected_index=$(interactive_single_select_menu "Select the type of key to generate:" "" "${key_types[@]}")
-    [[ $? -ne 0 ]] && { printInfoMsg "Operation cancelled."; return; }
-
-    local key_type_selection="${key_types[$selected_index]}"
     local key_type="ed25519" # Default
     local -a key_bits_args=()
     if [[ "$key_type_selection" == "rsa (legacy, 4096 bits)" ]]; then
@@ -912,6 +908,26 @@ generate_ssh_key() {
         # run_with_spinner already prints the error details.
         printErrMsg "Failed to generate SSH key."
     fi
+}
+
+# (Private) A wrapper for _generate_ssh_key_from_type that adds a banner.
+# This is intended to be called by `run_menu_action`.
+_generate_ssh_key_from_type_with_banner() {
+    printBanner "Add New SSH Key"
+    _generate_ssh_key_from_type "$1"
+}
+
+# Adds a new SSH key pair without associating it with a host.
+generate_ssh_key() {
+    printBanner "Add New SSH Key"
+
+    local -a key_types=("ed25519 (recommended)" "rsa (legacy, 4096 bits)")
+    local selected_index
+    selected_index=$(interactive_single_select_menu "Select the type of key to generate:" "" "${key_types[@]}")
+    [[ $? -ne 0 ]] && { printInfoMsg "Operation cancelled."; return; }
+
+    # The worker function will now handle the rest of the prompts.
+    _generate_ssh_key_from_type "${key_types[$selected_index]}"
 }
 
 # Prompts user to select a host and then copies the specified key.
@@ -2970,7 +2986,24 @@ _key_view_key_handler() {
             if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref + 1) % num_options )); fi
             ;;
         'a'|'A')
-            run_menu_action "generate_ssh_key"; out_result="refresh" ;;
+            # Move cursor down past the list and its bottom divider.
+            printf '\n' >/dev/tty
+
+            # Footer is 3 lines + 1 bottom divider line.
+            local lines_to_clear=4
+            clear_lines_down "$lines_to_clear" >/dev/tty
+
+            # Show the prompt in the cleared footer area.
+            printBanner "${C_GREEN}Add New SSH Key${T_RESET}"
+            local -a key_types=("ed25519 (recommended)" "rsa (legacy, 4096 bits)")
+            local selected_index
+            selected_index=$(interactive_single_select_menu "Select the type of key to generate:" "" "${key_types[@]}")
+
+            if [[ $? -eq 0 ]]; then
+                # A selection was made. Now clear the screen and run the rest of the wizard.
+                run_menu_action "_generate_ssh_key_from_type_with_banner" "${key_types[$selected_index]}"
+            fi
+            out_result="refresh" ;;
         'c'|'C')
             if [[ -n "$selected_key_path" ]]; then
                 if [[ -f "${selected_key_path}.pub" ]]; then
