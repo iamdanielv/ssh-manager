@@ -1350,23 +1350,9 @@ _prompt_for_identity_file_interactive() {
 
 # --- Host Lifecycle Functions ---
 
-# Prompts user for details and adds a new host to the SSH config.
-add_ssh_host() {
+# Prompts user for details and adds a new host to the SSH config from scratch.
+add_ssh_host_from_scratch() {
     printBanner "Add New SSH Host"
-
-    # --- Step 1: Choose to create from scratch or clone ---
-    local -a add_options=("Create a new host from scratch" "Clone settings from an existing host")
-    local add_choice_idx
-    add_choice_idx=$(interactive_single_select_menu "How would you like to add the new host?" "" "${add_options[@]}")
-    if [[ $? -ne 0 ]]; then printInfoMsg "Host creation cancelled."; return; fi
-
-    # --- Step 2: Handle choice ---
-    if [[ "${add_options[$add_choice_idx]}" == "Clone settings from an existing host" ]]; then
-        # Delegate to the dedicated clone function.
-        # shellcheck disable=SC2119
-        clone_ssh_host
-        return
-    fi
 
     # --- Create from scratch logic ---
     local initial_alias="" initial_hostname="" initial_user="$USER" initial_port="22" initial_identityfile=""
@@ -1392,6 +1378,30 @@ add_ssh_host() {
         if prompt_yes_no "Copy public key to the new server now?" "y"; then copy_ssh_id_for_host "$new_alias" "${new_identityfile}.pub"; fi
     fi
     if prompt_yes_no "Test the connection to '${new_alias}' now?" "y"; then echo; _test_connection_for_host "$new_alias"; fi
+}
+
+# Prompts user for details and adds a new host to the SSH config.
+# This version is for the command-line flag and presents the initial choice.
+add_ssh_host() {
+    printBanner "Add New SSH Host"
+
+    # --- Step 1: Choose to create from scratch or clone ---
+    local -a add_options=("Create a new host from scratch" "Clone settings from an existing host")
+    local add_choice_idx
+    add_choice_idx=$(interactive_single_select_menu "How would you like to add the new host?" "" "${add_options[@]}")
+    if [[ $? -ne 0 ]]; then printInfoMsg "Host creation cancelled."; return; fi
+
+    # --- Step 2: Handle choice ---
+    if [[ "${add_options[$add_choice_idx]}" == "Clone settings from an existing host" ]]; then
+        # Delegate to the dedicated clone function.
+        # shellcheck disable=SC2119
+        clone_ssh_host
+        return
+    fi
+
+    # --- Create from scratch logic ---
+    # This function is now separate, call it.
+    add_ssh_host_from_scratch
 }
 
 # (Private) A generic, reusable interactive loop for the host editors.
@@ -2810,8 +2820,30 @@ _server_view_key_handler() {
                     # Trigger a full redraw to restore the footer and clean up.
                     out_result="refresh"
                 fi
-            fi ;;
-        'a'|'A') run_menu_action "add_ssh_host"; out_result="refresh" ;;
+            fi
+            ;;
+        'a'|'A')
+            # Move cursor down past the list and its top divider.
+            printf '\n' >/dev/tty
+            # The area to clear is the 4 lines of footer text + 1 bottom divider line.
+            local lines_to_clear=5
+            clear_lines_down "$lines_to_clear" >/dev/tty
+
+            # Show the prompt in the cleared footer area.
+            printBanner "${C_GREEN}Add New SSH Host${T_RESET}"
+            local -a add_options=("Create a new host from scratch" "Clone settings from an existing host")
+            local add_choice_idx
+            add_choice_idx=$(interactive_single_select_menu "How would you like to add the new host?" "" "${add_options[@]}")
+
+            if [[ $? -eq 0 ]]; then
+                if [[ "${add_options[$add_choice_idx]}" == "Clone settings from an existing host" ]]; then
+                    run_menu_action "clone_ssh_host"
+                else
+                    run_menu_action "add_ssh_host_from_scratch"
+                fi
+            fi
+            out_result="refresh"
+            ;;
         'e') if [[ -n "$selected_host" ]]; then run_menu_action "edit_ssh_host" "$selected_host"; out_result="refresh"; fi ;;
         'E') if [[ -n "$selected_host" ]]; then run_menu_action "edit_ssh_host_in_editor" "$selected_host"; out_result="refresh"; fi ;;
         'd'|'D')
