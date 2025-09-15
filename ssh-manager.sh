@@ -2796,8 +2796,16 @@ _server_view_key_handler() {
         'E') if [[ -n "$selected_host" ]]; then run_menu_action "edit_ssh_host_in_editor" "$selected_host"; out_result="refresh"; fi ;;
         'd'|'D') if [[ -n "$selected_host" ]]; then run_menu_action "remove_ssh_host" "$selected_host"; out_result="refresh"; fi ;;
         'c'|'C') if [[ -n "$selected_host" ]]; then run_menu_action "clone_ssh_host" "$selected_host"; out_result="refresh"; fi ;;
-        't') if [[ -n "$selected_host" ]]; then clear; printBanner "Test SSH Connection"; _test_connection_for_host "$selected_host"; prompt_to_continue; fi ;;
-        'T') run_menu_action "test_all_ssh_connections" ;;
+        't')
+            if [[ -n "$selected_host" ]]; then
+                clear; printBanner "Test SSH Connection"; _test_connection_for_host "$selected_host"; prompt_to_continue
+                out_result="refresh" # Trigger a full redraw to restore the view.
+            fi
+            ;;
+        'T')
+            run_menu_action "test_all_ssh_connections"
+            out_result="refresh" # Trigger a full redraw to restore the view.
+            ;;
         "$KEY_ESC"|"q"|"Q") out_result="exit" ;; # Exit view
     esac
 }
