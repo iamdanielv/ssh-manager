@@ -2207,42 +2207,53 @@ _interactive_port_forward_editor_loop() {
     # Original values are passed by value for comparison.
     local original_type="$9" original_p1="${10}" original_h="${11}" original_p2="${12}" original_host="${13}" original_desc="${14}"
 
-    while true; do
-        clear; printBanner "$banner_text"
-        _draw_interactive_port_forward_editor_ui "$mode" "$n_type" "$n_p1" "$n_h" "$n_p2" "$n_host" "$n_desc" \
-                                                 "$original_type" "$original_p1" "$original_h" "$original_p2" "$original_host" "$original_desc"
+    # Initial draw
+    clear
+    printBanner "$banner_text"
+    _draw_interactive_port_forward_editor_ui "$mode" "$n_type" "$n_p1" "$n_h" "$n_p2" "$n_host" "$n_desc" \
+                                             "$original_type" "$original_p1" "$original_h" "$original_p2" "$original_host" "$original_desc"
 
+    while true; do
         local key; key=$(read_single_char)
+        # Default to redrawing after any action, except for ignored keys.
+        local needs_redraw=true
+
         case "$key" in
             '1')
                 # Edit Type
                 clear_current_line
                 local -a type_options=("Local (-L)" "Remote (-R)"); local type_idx
                 type_idx=$(interactive_single_select_menu "Select forward type:" "" "${type_options[@]}")
-                if [[ $? -eq 0 ]]; then if [[ "$type_idx" -eq 0 ]]; then n_type="Local"; else n_type="Remote"; fi; fi ;;
+                if [[ $? -eq 0 ]]; then if [[ "$type_idx" -eq 0 ]]; then n_type="Local"; else n_type="Remote"; fi; fi
+                ;;
             '2')
                 # Edit SSH Host
                 clear_current_line
                 local selected_host; selected_host=$(select_ssh_host "Select a new SSH host:" "false")
-                if [[ $? -eq 0 ]]; then n_host="$selected_host"; fi ;;
+                if [[ $? -eq 0 ]]; then n_host="$selected_host"; fi
+                ;;
             '3')
                 # Edit Port 1
                 clear_current_line
                 local p1_label="Local Port"; if [[ "$n_type" == "Remote" ]]; then p1_label="Remote Port"; fi
-                prompt_for_input "Enter the ${p1_label} to listen on" "$p_p1" "$n_p1" ;;
+                prompt_for_input "Enter the ${p1_label} to listen on" "$p_p1" "$n_p1"
+                ;;
             '4')
                 # Edit Host
                 clear_current_line
                 local h_prompt="Enter the REMOTE host to connect to (from ${n_host})"; if [[ "$n_type" == "Remote" ]]; then h_prompt="Enter the LOCAL host to connect to"; fi
-                prompt_for_input "$h_prompt" "$p_h" "$n_h" ;;
+                prompt_for_input "$h_prompt" "$p_h" "$n_h"
+                ;;
             '5')
                 # Edit Port 2
                 clear_current_line
                 local p2_prompt="Enter the REMOTE port to connect to"; if [[ "$n_type" == "Remote" ]]; then p2_prompt="Enter the LOCAL port to connect to"; fi
-                prompt_for_input "$p2_prompt" "$p_p2" "$n_p2" ;;
+                prompt_for_input "$p2_prompt" "$p_p2" "$n_p2"
+                ;;
             '6')
                 # Edit Description
-                prompt_for_input "Enter a short description" "$p_desc" "$n_desc" ;;
+                prompt_for_input "Enter a short description" "$p_desc" "$n_desc"
+                ;;
             'c'|'C'|'d'|'D')
                 # Discard
                 clear_current_line
@@ -2250,16 +2261,29 @@ _interactive_port_forward_editor_loop() {
                 if prompt_yes_no "$question" "y"; then
                     n_type="$original_type"; n_p1="$original_p1"; n_h="$original_h"; n_p2="$original_p2"; n_host="$original_host"; n_desc="$original_desc"
                     printInfoMsg "Changes discarded."; sleep 1
-                fi ;;
+                fi
+                ;;
             's'|'S') return 0 ;; # Signal to Save
             'q'|'Q'|"$KEY_ESC")
                 # Quit
-                clear_current_line
                 if [[ "$n_type" != "$original_type" || "$n_p1" != "$original_p1" || "$n_h" != "$original_h" || "$n_p2" != "$original_p2" || "$n_host" != "$original_host" || "$n_desc" != "$original_desc" ]]; then
                     clear_current_line
                     if prompt_yes_no "You have unsaved changes. Quit without saving?" "n"; then printInfoMsg "Operation cancelled."; sleep 1; return 1; fi
-                else return 1; fi ;;
+                else return 1; fi
+                ;;
+            *)
+                # Any other key is ignored and does not trigger a redraw.
+                needs_redraw=false
+                ;;
         esac
+
+        # Redraw the screen if any action that might have changed data or dirtied the screen was taken.
+        if [[ "$needs_redraw" == "true" ]]; then
+            clear
+            printBanner "$banner_text"
+            _draw_interactive_port_forward_editor_ui "$mode" "$n_type" "$n_p1" "$n_h" "$n_p2" "$n_host" "$n_desc" \
+                                                     "$original_type" "$original_p1" "$original_h" "$original_p2" "$original_host" "$original_desc"
+        fi
     done
 }
 
