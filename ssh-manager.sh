@@ -906,8 +906,8 @@ generate_ssh_key() {
     if run_with_spinner "Generating new ${key_type} key..." \
         ssh-keygen -t "${key_type}" "${key_bits_args[@]}" -f "${full_key_path}" -N "" -C "${key_comment}"; then
         printInfoMsg "Key pair created:"
-        printMsg "  Private key: ${C_L_BLUE}${full_key_path}${T_RESET}"
-        printMsg "  Public key:  ${C_L_BLUE}${full_key_path}.pub${T_RESET}"
+        printMsg "  Private key: ${C_L_BLUE}${full_key_path/#$HOME/\~}${T_RESET}"
+        printMsg "  Public key:  ${C_L_BLUE}${full_key_path/#$HOME/\~}.pub${T_RESET}"
     else
         # run_with_spinner already prints the error details.
         printErrMsg "Failed to generate SSH key."
@@ -918,7 +918,7 @@ generate_ssh_key() {
 copy_selected_ssh_key() {
     local selected_key="$1"
     printBanner "Copy SSH Key to Server"
-    printInfoMsg "Selected key: ${C_L_BLUE}${selected_key}${T_RESET}"
+    printInfoMsg "Selected key: ${C_L_BLUE}${selected_key/#$HOME/\~}${T_RESET}"
 
     local selected_host
     selected_host=$(select_ssh_host "Select a host to copy this key to:")
@@ -970,7 +970,7 @@ rename_ssh_key() {
         return
     fi
     if [[ -f "$new_key_path" || -f "${new_key_path}.pub" ]]; then
-        printErrMsg "Target key file '${new_key_path}' or its .pub already exists. Aborting."
+        printErrMsg "Target key file '${new_key_path/#$HOME/\~}' or its .pub already exists. Aborting."
         return 1
     fi
 
@@ -987,8 +987,8 @@ rename_ssh_key() {
 view_public_key() {
     local pub_key_path="$1"
     printBanner "View Public Key"
-    if [[ ! -f "$pub_key_path" ]]; then printErrMsg "Public key file not found: ${pub_key_path}"; return 1; fi
-    printInfoMsg "Contents of ${C_L_BLUE}${pub_key_path}${T_RESET}:"
+    if [[ ! -f "$pub_key_path" ]]; then printErrMsg "Public key file not found: ${pub_key_path/#$HOME/\~}"; return 1; fi
+    printInfoMsg "Contents of ${C_L_BLUE}${pub_key_path/#$HOME/\~}${T_RESET}:"
     printMsg "${C_GRAY}${DIV}${T_RESET}"
     printMsg "${C_L_GRAY}$(cat "${pub_key_path}")${T_RESET}"
     printMsg "${C_GRAY}${DIV}${T_RESET}"
@@ -1007,19 +1007,19 @@ regenerate_public_key() {
     printBanner "Re-generate Public Key"
 
     if [[ ! -f "$private_key_path" ]]; then
-        printErrMsg "Private key not found: ${private_key_path}"
+        printErrMsg "Private key not found: ${private_key_path/#$HOME/\~}"
         return 1
     fi
 
     if [[ -f "$public_key_path" ]]; then
-        if ! prompt_yes_no "Public key '${public_key_path}' already exists. Overwrite it?" "n"; then
+        if ! prompt_yes_no "Public key '${public_key_path/#$HOME/\~}' already exists. Overwrite it?" "n"; then
             printInfoMsg "Operation cancelled."
             return
         fi
     fi
 
     if run_with_spinner "Re-generating public key..." _regenerate_public_key_worker "$private_key_path" "$public_key_path"; then
-        printOkMsg "Public key successfully generated at: ${C_L_BLUE}${public_key_path}${T_RESET}"
+        printOkMsg "Public key successfully generated at: ${C_L_BLUE}${public_key_path/#$HOME/\~}${T_RESET}"
     else
         printErrMsg "Failed to re-generate public key."
     fi
@@ -1127,10 +1127,15 @@ _select_and_get_existing_key() {
     fi
 
     local -a private_key_paths
-    for pub_key in "${pub_keys[@]}"; do private_key_paths+=("${pub_key%.pub}"); done
+    local -a display_paths
+    for pub_key in "${pub_keys[@]}"; do
+        local private_key="${pub_key%.pub}"
+        private_key_paths+=("$private_key")
+        display_paths+=("${private_key/#$HOME/\~}")
+    done
 
     local key_idx
-    key_idx=$(interactive_single_select_menu "Select the private key to use:" "" "${private_key_paths[@]}") || return 1
+    key_idx=$(interactive_single_select_menu "Select the private key to use:" "" "${display_paths[@]}") || return 1
     out_identity_file="${private_key_paths[$key_idx]}"
     return 0
 }
@@ -1571,18 +1576,18 @@ _handle_key_management_on_alias_change() {
 
     if [[ ${#hosts_sharing_key[@]} -gt 0 ]]; then
         # Key is shared, offer to COPY it.
-        local question="The key '${current_identityfile}' is shared by other hosts.\n    Do you want to create a dedicated COPY of this key for '${new_alias}'?\n    New key path: ${C_L_BLUE}${proposed_new_key_path}${T_RESET}"
+        local question="The key '${current_identityfile/#$HOME/\~}' is shared by other hosts.\n    Do you want to create a dedicated COPY of this key for '${new_alias}'?\n    New key path: ${C_L_BLUE}${proposed_new_key_path/#$HOME/\~}${T_RESET}"
         if prompt_yes_no "$question" "y"; then
-            if [[ -f "$proposed_new_key_path" || -f "${proposed_new_key_path}.pub" ]]; then printErrMsg "Cannot create key copy: target file '${proposed_new_key_path}' or its .pub already exists."; return 1; fi
+            if [[ -f "$proposed_new_key_path" || -f "${proposed_new_key_path}.pub" ]]; then printErrMsg "Cannot create key copy: target file '${proposed_new_key_path/#$HOME/\~}' or its .pub already exists."; return 1; fi
             if run_with_spinner "Copying key files..." _copy_key_pair "$expanded_old_key_path" "$proposed_new_key_path"; then
                 out_new_identityfile_ref="$proposed_new_key_path" # Update the nameref to point to the new key path.
             else printErrMsg "Failed to copy key files."; return 1; fi
         fi
     elif [[ "$expanded_old_key_path" != "$proposed_new_key_path" ]]; then
         # Key is not shared, offer to RENAME it.
-        local question="This host uses the key:\n    ${C_L_BLUE}${current_identityfile/#\~/$HOME}${T_RESET}\nDo you want to rename this key to match the new host alias?\n    New name: ${C_L_BLUE}${proposed_new_key_path}${T_RESET}"
+        local question="This host uses the key:\n    ${C_L_BLUE}${current_identityfile/#$HOME/\~}${T_RESET}\nDo you want to rename this key to match the new host alias?\n    New name: ${C_L_BLUE}${proposed_new_key_path/#$HOME/\~}${T_RESET}"
         if prompt_yes_no "$question" "y"; then
-            if [[ -f "$proposed_new_key_path" || -f "${proposed_new_key_path}.pub" ]]; then printErrMsg "Cannot rename key: target file '${proposed_new_key_path}' or its .pub already exists."; return 1; fi
+            if [[ -f "$proposed_new_key_path" || -f "${proposed_new_key_path}.pub" ]]; then printErrMsg "Cannot rename key: target file '${proposed_new_key_path/#$HOME/\~}' or its .pub already exists."; return 1; fi
             if run_with_spinner "Renaming key files..." _rename_key_pair "$expanded_old_key_path" "$proposed_new_key_path"; then
                 out_new_identityfile_ref="$proposed_new_key_path" # Update the nameref to point to the new key path.
             else printErrMsg "Failed to rename key files."; return 1; fi
@@ -1782,14 +1787,14 @@ reorder_ssh_hosts() {
     local timestamp; timestamp=$(date +"%Y-%m-%d_%H-%M-%S")
     local backup_file="${backup_dir}/config_reorder_${timestamp}.bak"
     cp "$SSH_CONFIG_PATH" "$backup_file"
-    printInfoMsg "Backup created at: ${C_L_BLUE}${backup_file}${T_RESET}"
+    printInfoMsg "Backup created at: ${C_L_BLUE}${backup_file/#$HOME/\~}${T_RESET}"
 
     if run_with_spinner "Applying new host order..." \
         _reorder_ssh_hosts_worker "$backup_file" "${new_ordered_hosts[@]}"; then
         printOkMsg "SSH config file has been re-ordered successfully."
     else
         printErrMsg "Failed to re-order hosts. Your original config is safe."
-        printInfoMsg "The backup of your config is available at: ${backup_file}"
+        printInfoMsg "The backup of your config is available at: ${backup_file/#$HOME/\~}"
     fi
 }
 
@@ -1820,13 +1825,13 @@ _cleanup_orphaned_key() {
         local expanded_host_key_file="${host_key_file/#\~/$HOME}"
 
         if [[ "$expanded_host_key_file" == "$expanded_key_path" ]]; then
-            printInfoMsg "The key '${key_file_path}' is still in use by host '${host}'. It will not be removed."
+            printInfoMsg "The key '${key_file_path/#$HOME/\~}' is still in use by host '${host}'. It will not be removed."
             return # Key is in use, so we're done.
         fi
     done
 
     # 5. If we get here, the key is not used by any other host. Prompt for deletion.
-    if prompt_yes_no "The key '${key_file_path}' is no longer referenced by any host.\n    Remove it and its .pub file?" "n"; then
+    if prompt_yes_no "The key '${key_file_path/#$HOME/\~}' is no longer referenced by any host.\n    Remove it and its .pub file?" "n"; then
         rm -f "${expanded_key_path}" "${expanded_key_path}.pub"
         printOkMsg "Removed key files."
     fi
@@ -1912,21 +1917,22 @@ export_ssh_hosts() {
 
     local export_file
     prompt_for_input "Enter path for export file" export_file "ssh_hosts_export.conf"
+    local expanded_export_file="${export_file/#\~/$HOME}"
 
     # Clear the file or create it
-    true > "$export_file"
+    true > "$expanded_export_file"
 
     printInfoMsg "Exporting ${#hosts_to_export[@]} host(s)..."
     for host in "${hosts_to_export[@]}"; do
         # Get the block for the host and append it to the export file
-        echo "" >> "$export_file" # Add a newline for separation
-        _get_host_block_from_config "$host" "$SSH_CONFIG_PATH" >> "$export_file"
+        echo "" >> "$expanded_export_file" # Add a newline for separation
+        _get_host_block_from_config "$host" "$SSH_CONFIG_PATH" >> "$expanded_export_file"
     done
 
     # Clean up potential leading newline from the first entry
-    sed -i '1{/^$/d;}' "$export_file"
+    sed -i '1{/^$/d;}' "$expanded_export_file"
 
-    printOkMsg "Successfully exported ${#hosts_to_export[@]} host(s) to ${C_L_BLUE}${export_file}${T_RESET}."
+    printOkMsg "Successfully exported ${#hosts_to_export[@]} host(s) to ${C_L_BLUE}${expanded_export_file/#$HOME/\~}${T_RESET}."
 }
 
 # Imports SSH host configurations from a file.
@@ -1935,18 +1941,19 @@ import_ssh_hosts() {
 
     local import_file
     prompt_for_input "Enter path of file to import from" import_file
+    local expanded_import_file="${import_file/#\~/$HOME}"
 
-    if [[ ! -f "$import_file" ]]; then
-        printErrMsg "Import file not found: ${import_file}"
+    if [[ ! -f "$expanded_import_file" ]]; then
+        printErrMsg "Import file not found: ${expanded_import_file/#$HOME/\~}"
         return 1
     fi
 
     # Get hosts from the import file
     local -a hosts_to_import
-    mapfile -t hosts_to_import < <(awk '/^[Hh]ost / && $2 != "*" {for (i=2; i<=NF; i++) print $i}' "$import_file")
+    mapfile -t hosts_to_import < <(awk '/^[Hh]ost / && $2 != "*" {for (i=2; i<=NF; i++) print $i}' "$expanded_import_file")
 
     if [[ ${#hosts_to_import[@]} -eq 0 ]]; then
-        printInfoMsg "No valid 'Host' entries found in ${import_file}."
+        printInfoMsg "No valid 'Host' entries found in ${expanded_import_file/#$HOME/\~}."
         return
     fi
 
@@ -1962,7 +1969,7 @@ import_ssh_hosts() {
                 0) # Yes
                     # Atomically replace the host block
                     local config_without_host; config_without_host=$(_remove_host_block_from_config "$host");
-                    local new_block; new_block=$(_get_host_block_from_config "$host" "$import_file")
+                    local new_block; new_block=$(_get_host_block_from_config "$host" "$expanded_import_file")
                     printf '%s\n\n%s' "$config_without_host" "$new_block" | cat -s > "$SSH_CONFIG_PATH"
                     ((overwritten_count++))
                     ;;
@@ -1977,7 +1984,7 @@ import_ssh_hosts() {
             esac
         else
             # Host is new, so append it.
-            echo "" >> "$SSH_CONFIG_PATH"; _get_host_block_from_config "$host" "$import_file" >> "$SSH_CONFIG_PATH"
+            echo "" >> "$SSH_CONFIG_PATH"; _get_host_block_from_config "$host" "$expanded_import_file" >> "$SSH_CONFIG_PATH"
             ((imported_count++))
         fi
     done
@@ -2628,7 +2635,7 @@ backup_ssh_config() {
         cp "$SSH_CONFIG_PATH" "$backup_file"
     then
         # The spinner already prints a success message. We can add more detail.
-        printInfoMsg "Backup saved to: ${C_L_BLUE}${backup_file}${T_RESET}"
+        printInfoMsg "Backup saved to: ${C_L_BLUE}${backup_file/#$HOME/\~}${T_RESET}"
     else
         # The spinner will print the error from `cp`.
         printErrMsg "Failed to create backup."
@@ -2875,16 +2882,40 @@ _key_view_key_handler() {
         'c'|'C')
             if [[ -n "$selected_key_path" ]]; then
                 if [[ -f "${selected_key_path}.pub" ]]; then run_menu_action "copy_selected_ssh_key" "${selected_key_path}.pub";
-                else printErrMsg "Public key for '${selected_key_path}' not found."; prompt_to_continue; fi
+                else printErrMsg "Public key for '${selected_key_path/#$HOME/\~}' not found."; prompt_to_continue; fi
             fi ;;
         'd'|'D')
-            if [[ -n "$selected_key_path" ]]; then run_menu_action "delete_ssh_key" "$selected_key_path"; out_result="refresh"; fi ;;
+            if [[ -n "$selected_key_path" ]]; then
+                # Move cursor down past the list and its bottom divider.
+                printf '\n' >/dev/tty
+
+                # Footer is 3 lines + 1 bottom divider line.
+                local lines_to_clear=4
+                clear_lines_down "$lines_to_clear" >/dev/tty
+
+                # Build the multi-line question for the prompt.
+                local pub_key_path="${selected_key_path}.pub"
+                local question="Are you sure you want to permanently delete this key pair?\n     Private: ${selected_key_path/#$HOME/\~}"
+                if [[ -f "$pub_key_path" ]]; then question+="\n     Public:  ${pub_key_path/#$HOME/\~}"; fi
+
+                # Show the prompt in the cleared footer area.
+                if prompt_yes_no "$question" "n"; then
+                    # User confirmed. Run the deletion with a spinner.
+                    # The spinner will print its own success/error message.
+                    run_with_spinner "Deleting key pair..." rm -f "$selected_key_path" "${selected_key_path}.pub"
+                    # Wait a moment for the user to see the result before redrawing.
+                    sleep 1
+                fi
+                # Whether confirmed or cancelled, trigger a full refresh to restore the UI.
+                # The prompt_yes_no function prints a cancellation message if needed.
+                out_result="refresh"
+            fi ;;
         'r'|'R')
             if [[ -n "$selected_key_path" ]]; then run_menu_action "rename_ssh_key" "$selected_key_path"; out_result="refresh"; fi ;;
         'v'|'V')
             if [[ -n "$selected_key_path" ]]; then
                 if [[ -f "${selected_key_path}.pub" ]]; then run_menu_action "view_public_key" "${selected_key_path}.pub";
-                else printErrMsg "Public key for '${selected_key_path}' not found."; prompt_to_continue; fi
+                else printErrMsg "Public key for '${selected_key_path/#$HOME/\~}' not found."; prompt_to_continue; fi
             fi ;;
         'p'|'P')
             if [[ -n "$selected_key_path" ]]; then run_menu_action "regenerate_public_key" "$selected_key_path"; fi ;;
