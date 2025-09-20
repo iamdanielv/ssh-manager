@@ -12,6 +12,12 @@ It is a single, self-contained `bash` script with no external dependencies beyon
 
 ## ✨ Features
 
+- **Responsive TUI**: Terminal interface with:
+  - Clean, aligned, table-like layouts for all lists.
+  - Collapsible footers to maximize content visibility.
+  - In-place actions (start/stop, delete) for a smooth, flicker-free workflow.
+  - input validation to prevent configuration errors.
+
 The project is split into two scripts with distinct features:
 
 ### `ssh-manager.sh` (Main Script)
