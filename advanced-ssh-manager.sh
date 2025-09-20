@@ -99,8 +99,7 @@ import_ssh_hosts() {
 }
 
 backup_ssh_config() {
-    printBanner "Backup SSH Config"
-    if ! prompt_yes_no "Create a timestamped backup of your SSH config file?" "y"; then
+    if ! prompt_yes_no "Create a timestamped backup of your SSH config file?" "y" >/dev/tty; then
         printInfoMsg "Backup cancelled."
         return
     fi
@@ -175,8 +174,18 @@ _advanced_host_view_key_handler() {
             out_result="refresh"
             ;;
         'b'|'B')
-            run_menu_action "backup_ssh_config"
-            out_result="refresh"
+            {
+                _clear_list_view_footer "_advanced_host_view_draw_footer"
+                printMsgNoNewline "${T_CURSOR_SHOW}"
+                printBanner "Backup SSH Config"
+
+                backup_ssh_config
+
+                printMsgNoNewline "${T_CURSOR_HIDE}"
+                # Wait a moment for the user to see the result before redrawing.
+                sleep 1
+            } >/dev/tty
+            out_result="refresh" # Redraw the view
             ;;
         'x'|'X')
             run_menu_action "export_ssh_hosts"
