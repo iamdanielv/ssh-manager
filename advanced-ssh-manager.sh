@@ -115,7 +115,15 @@ export_ssh_hosts() {
     local export_file; prompt_for_input "Enter path for export file" export_file "ssh_hosts_export.conf"; local expanded_export_file="${export_file/#\~/$HOME}"
     true > "$expanded_export_file"; printInfoMsg "Exporting ${#hosts_to_export[@]} host(s)..."
     for host in "${hosts_to_export[@]}"; do echo "" >> "$expanded_export_file"; _get_host_block_from_config "$host" "$SSH_CONFIG_PATH" >> "$expanded_export_file"; done
-    sed -i '1{/^$/d;}' "$expanded_export_file"
+    # Remove the initial blank line that was added before the first block.
+    # This is a pure-bash alternative to `sed -i '1{/^$/d;}'`.
+    local temp_file; temp_file=$(mktemp)
+    {
+        read -r first_line # Read the first line (which should be blank)
+        # If the first line was NOT blank (edge case), print it back.
+        if [[ -n "$first_line" ]]; then echo "$first_line"; fi
+        cat # Print the rest of the file.
+    } < "$expanded_export_file" > "$temp_file" && mv "$temp_file" "$expanded_export_file"
     printOkMsg "Successfully exported ${#hosts_to_export[@]} host(s) to ${C_L_BLUE}${expanded_export_file/#$HOME/\~}${T_RESET}."
 }
 
@@ -293,7 +301,7 @@ main() {
             *) print_usage; echo; printErrMsg "Unknown option: $1"; exit 1 ;;
         esac
     fi
-    _setup_environment "ssh" "awk" "cat" "grep" "rm" "mktemp" "cp" "date" "sed"
+    _setup_environment "ssh" "awk" "cat" "grep" "rm" "mktemp" "cp" "date"
     main_loop
 }
 

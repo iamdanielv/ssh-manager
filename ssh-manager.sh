@@ -92,10 +92,22 @@ printBanner() {
 }
 
 # Strips ANSI escape codes from a string.
+# This pure-bash version is generally more performant than a sed-based alternative
+# for the short strings typically found in this script's UI, as it avoids forking
+# external processes.
 # Usage: stripped_string=$(strip_ansi_codes "string with colors")
 strip_ansi_codes() {
-    # The sed command removes ANSI escape sequences.
-    echo -n "$1" | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g'
+    local s="$1"
+    # The C-style escape sequence for ESC
+    local esc=$'\033'
+    # The regex pattern to match ANSI escape codes. It must be unquoted for the =~ operator.
+    local pattern="$esc\\[[0-9;]*[a-zA-Z]"
+    # Loop to find and remove all occurrences of the pattern.
+    while [[ $s =~ $pattern ]]; do
+        # Replace the first match found with an empty string.
+        s="${s/${BASH_REMATCH[0]}/}"
+    done
+    echo -n "$s"
 }
 #endregion Logging & Banners
 
@@ -2242,7 +2254,7 @@ _get_active_port_forwards() {
     fi
 
     while IFS= read -r line; do
-        line=$(echo "$line" | sed 's/^[[:space:]]*//')
+        line="${line#"${line%%[![:space:]]*}"}" # Use parameter expansion to trim leading whitespace
         local pid; pid=$(echo "$line" | cut -d' ' -f1)
         local cmd; cmd=$(echo "$line" | cut -d' ' -f2-)
         local type_flag current_spec current_host
@@ -2683,6 +2695,7 @@ _get_key_details() {
     local bits; bits=$(echo "$details" | awk '{print $1}')
     local type; type=$(echo "$details" | awk '{print $NF}' | tr -d '()')
     local comment; comment=$(echo "$details" | awk '{for(i=3;i<NF;i++) printf "%s ",$i}' | sed 's/ $//')
+    comment="${comment% }" # Use parameter expansion to trim trailing space
     [[ -z "$comment" ]] && comment="(no comment)"
     echo "$type $bits $comment"
 }
