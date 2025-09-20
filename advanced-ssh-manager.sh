@@ -111,14 +111,6 @@ backup_ssh_config() {
     else printErrMsg "Failed to create backup."; fi
 }
 
-run_menu_action() {
-    local action_func="$1"; shift; clear
-    printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty
-    "$action_func" "$@"
-    printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty
-    prompt_to_continue
-}
-
 _setup_environment() {
     prereq_checks "$@"; mkdir -p "$SSH_DIR"; chmod 700 "$SSH_DIR"; touch "$SSH_CONFIG_PATH"; chmod 600 "$SSH_CONFIG_PATH"
 }
@@ -131,15 +123,6 @@ _advanced_host_view_draw_footer() {
     printMsg "                ${C_L_CYAN}ENTER/E (E)dit${T_RESET} Selected"
     printMsg "                ${C_L_GREEN}(B)ackup${T_RESET} config"
     printMsg "                ${C_L_YELLOW}E(x)port${T_RESET} to file | ${C_L_YELLOW}(I)mport${T_RESET} from file"
-}
-
-_advanced_host_view_refresh() {
-    local -n out_menu_options="$1"
-    local -n out_data_payloads="$2"
-    # Get raw host names for the data payload
-    mapfile -t out_data_payloads < <(get_ssh_hosts)
-    # Get formatted strings for display, including key info
-    get_detailed_ssh_hosts_menu_options out_menu_options "true"
 }
 
 _advanced_host_view_key_handler() {
@@ -187,7 +170,7 @@ interactive_advanced_host_view() {
     _interactive_list_view \
         "Advanced SSH Manager" \
         "_common_host_view_draw_header" \
-        "_advanced_host_view_refresh" \
+        "_common_host_view_refresh" \
         "_advanced_host_view_key_handler" \
         "_advanced_host_view_draw_footer"
 }

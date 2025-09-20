@@ -2497,7 +2497,8 @@ _host_centric_view_draw_footer() {
     printMsg "  ${T_BOLD}Connection:${T_RESET}   ${C_L_YELLOW}ENTER${T_RESET} Connect | (${C_L_CYAN}t${T_RESET})est selected | (${C_L_CYAN}T${T_RESET})est all"
 }
 
-_host_centric_view_refresh() {
+# (Private) A shared function to refresh the data for host list views.
+_common_host_view_refresh() {
     local -n out_menu_options="$1"
     local -n out_data_payloads="$2"
     # Get raw host names for the data payload
@@ -2632,7 +2633,7 @@ interactive_host_centric_view() {
     _interactive_list_view \
         "SSH Manager" \
         "_common_host_view_draw_header" \
-        "_host_centric_view_refresh" \
+        "_common_host_view_refresh" \
         "_host_centric_view_key_handler" \
         "_host_centric_view_draw_footer"
 }
