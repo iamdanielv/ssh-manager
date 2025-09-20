@@ -118,11 +118,15 @@ _setup_environment() {
 # --- Main Menu View Helpers ---
 
 _advanced_host_view_draw_footer() {
-    printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET}"
-    printMsg "  ${T_BOLD}Shortcuts:${T_RESET}    ${C_L_BLUE}(O)pen${T_RESET} ssh config in editor"
-    printMsg "                ${C_L_CYAN}ENTER/E (E)dit${T_RESET} Selected"
-    printMsg "                ${C_L_GREEN}(B)ackup${T_RESET} config"
-    printMsg "                ${C_L_YELLOW}E(x)port${T_RESET} to file | ${C_L_YELLOW}(I)mport${T_RESET} from file"
+    if [[ "${_ADVANCED_VIEW_FOOTER_EXPANDED:-0}" -eq 1 ]]; then
+        printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET} | ${C_BLUE}? for fewer options${T_RESET}"
+        printMsg "  ${T_BOLD}Shortcuts:${T_RESET}    ${C_L_BLUE}(O)pen${T_RESET} ssh config in editor"
+        printMsg "                ${C_L_CYAN}ENTER/E (E)dit${T_RESET} Selected"
+        printMsg "                ${C_L_GREEN}(B)ackup${T_RESET} config"
+        printMsg "                ${C_L_YELLOW}E(x)port${T_RESET} to file | ${C_L_YELLOW}(I)mport${T_RESET} from file"
+    else
+        printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET} | ${C_BLUE}? for more options${T_RESET}"
+    fi
 }
 
 _advanced_host_view_key_handler() {
@@ -138,6 +142,30 @@ _advanced_host_view_key_handler() {
     case "$key" in
         "$KEY_UP"|"k") if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref - 1 + num_options) % num_options )); fi ;;
         "$KEY_DOWN"|"j") if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref + 1) % num_options )); fi ;;
+        '/'|'?')
+            {
+                local old_footer_content; old_footer_content=$(_advanced_host_view_draw_footer)
+                local old_footer_lines; old_footer_lines=$(echo -e "$old_footer_content" | wc -l)
+
+                # Toggle the state. The variable is defined in the calling scope of _interactive_list_view.
+                _ADVANCED_VIEW_FOOTER_EXPANDED=$(( 1 - ${_ADVANCED_VIEW_FOOTER_EXPANDED:-0} ))
+
+                # --- Perform the partial redraw without a full refresh ---
+                # The cursor is at the end of the list, before the divider. Move down into the footer area.
+                printf '\n'
+
+                # Clear the old footer area (the footer text + the final bottom divider).
+                clear_lines_down $(( old_footer_lines + 1 ))
+
+                # Now, print the new footer and its final bottom divider.
+                _advanced_host_view_draw_footer
+                printMsg "${C_GRAY}${DIV}${T_RESET}"
+
+                # Move the cursor back to where the main loop expects it (end of list).
+                local new_footer_lines; new_footer_lines=$(echo -e "$(_advanced_host_view_draw_footer)" | wc -l)
+                move_cursor_up $(( new_footer_lines + 2 ))
+            } >/dev/tty
+            ;;
         "$KEY_ENTER"|'e'|'E')
             if [[ -n "$selected_host" ]]; then
                 run_menu_action "edit_ssh_host_in_editor" "$selected_host"
@@ -167,6 +195,9 @@ _advanced_host_view_key_handler() {
 }
 
 interactive_advanced_host_view() {
+    # This variable is visible to the key handler and footer functions called by _interactive_list_view.
+    local _ADVANCED_VIEW_FOOTER_EXPANDED=0
+
     _interactive_list_view \
         "Advanced SSH Manager" \
         "_common_host_view_draw_header" \
