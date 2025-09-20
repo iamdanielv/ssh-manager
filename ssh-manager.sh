@@ -2482,7 +2482,8 @@ run_menu_action() {
 
 # --- Host-Centric Main View Helpers ---
 
-_host_centric_view_draw_header() {
+# (Private) A shared function to draw a standardized header for host list views.
+_common_host_view_draw_header() {
     local header; header=$(printf "   %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "user@hostname[:port] (key)")
     printMsg "${C_WHITE}${header}${T_RESET}"
 }
@@ -2490,7 +2491,7 @@ _host_centric_view_draw_header() {
 _host_centric_view_draw_footer() {
     printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET}"
     printMsg "  ${T_BOLD}Manage:${T_RESET}       SSH ${C_MAGENTA}(K)eys${T_RESET} | ${C_L_CYAN}(P)ort${T_RESET} Forwards"
-    printMsg "                ${C_L_BLUE}(O)pen${T_RESET} ssh file"
+    printMsg "                ${C_L_BLUE}(O)pen${T_RESET} ssh config in editor"
     printMsg "  ${T_BOLD}Host Actions:${T_RESET} ${C_L_GREEN}(A)dd${T_RESET} | ${C_L_RED}(D)elete${T_RESET} | ${C_L_BLUE}(C)lone${T_RESET}"
     printMsg "  ${T_BOLD}Host Edit:${T_RESET}    ${C_L_CYAN}(E)dit${T_RESET} host details"
     printMsg "  ${T_BOLD}Connection:${T_RESET}   ${C_L_YELLOW}ENTER${T_RESET} Connect | (${C_L_CYAN}t${T_RESET})est selected | (${C_L_CYAN}T${T_RESET})est all"
@@ -2630,7 +2631,7 @@ _host_centric_view_key_handler() {
 interactive_host_centric_view() {
     _interactive_list_view \
         "SSH Manager" \
-        "_host_centric_view_draw_header" \
+        "_common_host_view_draw_header" \
         "_host_centric_view_refresh" \
         "_host_centric_view_key_handler" \
         "_host_centric_view_draw_footer"

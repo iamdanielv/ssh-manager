@@ -125,11 +125,6 @@ _setup_environment() {
 
 # --- Main Menu View Helpers ---
 
-_advanced_host_view_draw_header() {
-    local header; header=$(printf "   %-20s %s" "HOST ALIAS" "user@hostname[:port]")
-    printMsg "${C_WHITE}${header}${T_RESET}"
-}
-
 _advanced_host_view_draw_footer() {
     printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET}"
     printMsg "  ${T_BOLD}Shortcuts:${T_RESET}    ${C_L_BLUE}(O)pen${T_RESET} ssh config in editor"
@@ -191,7 +186,7 @@ _advanced_host_view_key_handler() {
 interactive_advanced_host_view() {
     _interactive_list_view \
         "Advanced SSH Manager" \
-        "_advanced_host_view_draw_header" \
+        "_common_host_view_draw_header" \
         "_advanced_host_view_refresh" \
         "_advanced_host_view_key_handler" \
         "_advanced_host_view_draw_footer"
