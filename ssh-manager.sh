@@ -279,6 +279,33 @@ prompt_to_continue() {
     clear_lines_up 1
 }
 
+# (Private) Prompts for a port number and validates it is a valid integer (1-65535).
+# Loops until a valid port is entered or the user cancels.
+# Usage: _prompt_for_valid_port "Prompt text" "variable_name"
+# The variable's current value is used as the default.
+# Returns 0 on success, 1 on cancellation.
+_prompt_for_valid_port() {
+    local prompt_text="$1"
+    local var_name="$2"
+    local -n var_ref="$var_name" # nameref to the caller's variable
+
+    while true; do
+        # prompt_for_input returns 1 on cancellation (ESC)
+        # It will use the current value of var_ref as the default for the prompt.
+        if ! prompt_for_input "$prompt_text" "$var_name" "$var_ref"; then
+            return 1 # User cancelled
+        fi
+
+        # Validate the input now held by the nameref
+        if [[ "$var_ref" =~ ^[0-9]+$ && "$var_ref" -ge 1 && "$var_ref" -le 65535 ]]; then
+            return 0 # Valid port, success
+        else
+            printErrMsg "Invalid port. Please enter a number between 1 and 65535."; sleep 2; clear_lines_up 1
+            # The loop will continue, and prompt_for_input will use the invalid value as the new default.
+        fi
+    done
+}
+
 # --- Interactive Menus ---
 # (Private) Generic interactive menu function.
 # This is the new core implementation for both single and multi-select menus.
@@ -1500,7 +1527,7 @@ _interactive_host_editor_loop() {
                 ;;
             '2') prompt_for_input "HostName" "$p_hostname" "$n_hostname" ;;
             '3') prompt_for_input "User" "$p_user" "$n_user" ;;
-            '4') prompt_for_input "Port" "$p_port" "$n_port" ;;
+            '4') _prompt_for_valid_port "Port" "$p_port" ;;
             '5') clear_current_line; _prompt_for_identity_file_interactive "$p_identityfile" "$n_identityfile" "$n_alias" "$n_user" "$n_hostname" ;;
             'c'|'C'|'d'|'D')
                 # Discard/Reset
@@ -2110,7 +2137,7 @@ _interactive_port_forward_editor_loop() {
                 # Edit Port 1
                 clear_current_line
                 local p1_label="Local Port"; if [[ "$n_type" == "Remote" ]]; then p1_label="Remote Port"; fi
-                prompt_for_input "Enter the ${p1_label} to listen on" "$p_p1" "$n_p1"
+                _prompt_for_valid_port "Enter the ${p1_label} to listen on" "$p_p1"
                 ;;
             '4')
                 # Edit Host
@@ -2122,7 +2149,7 @@ _interactive_port_forward_editor_loop() {
                 # Edit Port 2
                 clear_current_line
                 local p2_prompt="Enter the REMOTE port to connect to"; if [[ "$n_type" == "Remote" ]]; then p2_prompt="Enter the LOCAL port to connect to"; fi
-                prompt_for_input "$p2_prompt" "$p_p2" "$n_p2"
+                _prompt_for_valid_port "$p2_prompt" "$p_p2"
                 ;;
             '6')
                 # Edit Description
