@@ -2202,31 +2202,6 @@ clone_saved_port_forward() {
     printOkMsg "Saved cloned port forward."
 }
 
-# Activates a saved port forward by running ssh in the background.
-activate_port_forward() {
-    local type="$1" spec="$2" host="$3"
-    local flag; if [[ "$type" == "Local" ]]; then flag="-L"; else flag="-R"; fi
-    local -a cmd_array=("ssh" "-o" "ExitOnForwardFailure=yes" "-N" "-f" "${flag}" "${spec}" "${host}")
-    printInfoMsg "Activating forward: ${type} ${spec} on ${host}"
-    printMsg "  ${C_L_BLUE}${cmd_array[*]}${T_RESET}"
-    if run_with_spinner "Establishing port forward..." "${cmd_array[@]}"; then
-        printOkMsg "Port forward activated in the background."
-    else
-        printErrMsg "Failed to activate port forward."
-    fi
-}
-
-# Deactivates a port forward by killing its process.
-deactivate_port_forward() {
-    local pid="$1" spec="$2" host="$3"
-    if ! prompt_yes_no "Stop port forward ${spec} on ${host} (PID: ${pid})?" "y"; then printInfoMsg "Operation cancelled."; return; fi
-    if run_with_spinner "Stopping port forward (PID: ${pid})..." kill "$pid"; then
-        printOkMsg "Port forward stopped."
-    else
-        printErrMsg "Failed to stop port forward process."
-    fi
-}
-
 # (Private) Formats a line for displaying port forward information with colors.
 # Usage: _format_port_forward_line <pid> <type> <spec> <host>
 _format_port_forward_line() {
@@ -2441,7 +2416,32 @@ _port_forward_view_key_handler() {
         'c'|'C') if [[ -n "$selected_payload" ]]; then run_menu_action "clone_saved_port_forward" "$type" "$spec" "$host" "$desc"; out_result="refresh"; fi ;;
         "$KEY_ENTER")
             if [[ -n "$selected_payload" ]]; then
-                if [[ -n "$pid" ]]; then run_menu_action "deactivate_port_forward" "$pid" "$spec" "$host"; else run_menu_action "activate_port_forward" "$type" "$spec" "$host"; fi
+                # Move cursor down past the list and its top divider.
+                printf '\n' >/dev/tty
+                # The area to clear is the 2 lines of footer text + 1 bottom divider line.
+                local lines_to_clear=3
+                clear_lines_down "$lines_to_clear" >/dev/tty
+
+                if [[ -n "$pid" ]]; then
+                    # Action: Deactivate
+                    if prompt_yes_no "Stop port forward\n     ${spec} on ${host}?" "y"; then
+                        if run_with_spinner "Stopping port forward (PID: ${pid})..." kill "$pid"; then
+                            printOkMsg "Port forward stopped."
+                        else
+                            printErrMsg "Failed to stop port forward process."
+                        fi
+                        sleep 1
+                    fi
+                else
+                    # Action: Activate
+                    local flag; if [[ "$type" == "Local" ]]; then flag="-L"; else flag="-R"; fi
+                    if run_with_spinner "Establishing port forward: ${spec}..." ssh -o ExitOnForwardFailure=yes -N -f "${flag}" "${spec}" "${host}"; then
+                        printOkMsg "Port forward activated in the background."
+                    else
+                        printErrMsg "Failed to activate port forward."
+                    fi
+                    sleep 1
+                fi
                 out_result="refresh"
             fi ;;
         "$KEY_ESC"|"q"|"Q") out_result="exit" ;; # Exit view
