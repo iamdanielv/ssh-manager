@@ -530,18 +530,29 @@ _interactive_list_view() {
     move_cursor_up "$lines_below_list"
 
     while true; do
-        # At this point, the cursor is at the end of the list content.
-        # We move up to the start of the list, redraw it, and the cursor will be back at the end of the list.
         move_cursor_up "$list_lines"
         _draw_list
 
-        local key; key=$(read_single_char); local selected_payload=""; if (( num_options > 0 )); then selected_payload="${data_payloads[$current_option]}"; fi
+        local key; key=$(read_single_char)
         local handler_result="noop" # Default action is a no-op (redraw list)
-        "$key_handler_func" "$key" "$selected_payload" "$current_option" current_option "$num_options" handler_result
+
+        case "$key" in
+            "$KEY_UP"|"k")
+                if (( num_options > 0 )); then current_option=$(( (current_option - 1 + num_options) % num_options )); fi
+                ;;
+            "$KEY_DOWN"|"j")
+                if (( num_options > 0 )); then current_option=$(( (current_option + 1) % num_options )); fi
+                ;;
+            *)
+                # Not a navigation key, delegate to the view-specific handler
+                local selected_payload=""
+                if (( num_options > 0 )); then selected_payload="${data_payloads[$current_option]}"; fi
+                "$key_handler_func" "$key" "$selected_payload" "$current_option" current_option "$num_options" handler_result
+                ;;
+        esac
 
         if [[ "$handler_result" == "refresh" ]]; then
             _refresh_data; _draw_full_view
-            # After a full redraw, we need to reposition the cursor again for the next loop iteration.
             lines_below_list=$(( footer_lines + 2 ))
             move_cursor_up "$lines_below_list"
         elif [[ "$handler_result" == "exit" ]]; then
@@ -2473,12 +2484,6 @@ _port_forward_view_key_handler() {
     local idx type spec host desc pid
     if [[ -n "$selected_payload" ]]; then IFS='|' read -r idx type spec host desc pid <<< "$selected_payload"; fi
     case "$key" in
-        "$KEY_UP"|"k")
-            if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref - 1 + num_options) % num_options )); fi
-            ;;
-        "$KEY_DOWN"|"j")
-            if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref + 1) % num_options )); fi
-            ;;
         'a'|'A') run_menu_action "add_saved_port_forward"; out_result="refresh" ;;
         'e'|'E') if [[ -n "$selected_payload" ]]; then run_menu_action "edit_saved_port_forward" "$idx"; out_result="refresh"; fi ;;
         'd'|'D')
@@ -2603,12 +2608,6 @@ _host_centric_view_key_handler() {
 
     out_result="noop"
     case "$key" in
-        "$KEY_UP"|"k")
-            if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref - 1 + num_options) % num_options )); fi
-            ;;
-        "$KEY_DOWN"|"j")
-            if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref + 1) % num_options )); fi
-            ;;
         '/'|'?')
             # This handler now depends on _HOST_VIEW_FOOTER_EXPANDED being set in its calling scope.
             # All UI manipulation must be redirected to /dev/tty to avoid interfering with command substitution.
@@ -2815,12 +2814,6 @@ _key_view_key_handler() {
 
     out_result="noop"
     case "$key" in
-        "$KEY_UP"|"k")
-            if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref - 1 + num_options) % num_options )); fi
-            ;;
-        "$KEY_DOWN"|"j")
-            if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref + 1) % num_options )); fi
-            ;;
         'a'|'A')
             # Move cursor down past the list and its bottom divider.
             _clear_list_view_footer "_key_view_draw_footer"

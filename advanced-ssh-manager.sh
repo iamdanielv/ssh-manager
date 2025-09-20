@@ -140,8 +140,6 @@ _advanced_host_view_key_handler() {
     out_result="noop" # Default to redraw
 
     case "$key" in
-        "$KEY_UP"|"k") if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref - 1 + num_options) % num_options )); fi ;;
-        "$KEY_DOWN"|"j") if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref + 1) % num_options )); fi ;;
         '/'|'?')
             {
                 local old_footer_content; old_footer_content=$(_advanced_host_view_draw_footer)
