@@ -279,6 +279,28 @@ prompt_to_continue() {
     clear_lines_up 1
 }
 
+# (Private) Clears the footer area of an interactive list view.
+# The cursor is expected to be at the end of the list content (before the divider).
+# The function leaves the cursor at the start of the now-cleared footer area.
+# Usage: _clear_list_view_footer <footer_draw_func_name>
+_clear_list_view_footer() {
+    local footer_draw_func="$1"
+
+    # The cursor is at the end of the list content.
+    # Move down one line to be past the list's bottom divider.
+    printf '\n' >/dev/tty
+
+    # Calculate how many lines the footer is currently using by calling its draw function.
+    local footer_content; footer_content=$("$footer_draw_func")
+    local footer_lines; footer_lines=$(echo -e "$footer_content" | wc -l)
+
+    # The area to clear is the footer text + the final bottom divider line.
+    local lines_to_clear=$(( footer_lines + 1 ))
+    clear_lines_down "$lines_to_clear" >/dev/tty
+
+    # The cursor is now at the start of where the footer text was, ready for new output.
+}
+
 # (Private) Prompts for a port number and validates it is a valid integer (1-65535).
 # Loops until a valid port is entered or the user cancels.
 # Usage: _prompt_for_valid_port "Prompt text" "variable_name"
@@ -2462,11 +2484,7 @@ _port_forward_view_key_handler() {
         'd'|'D')
             if [[ -n "$selected_payload" ]]; then
                 # Move cursor down past the list and its top divider.
-                printf '\n' >/dev/tty
-                # The area to clear is the 2 lines of footer text + 1 bottom divider line.
-                local lines_to_clear=3
-                clear_lines_down "$lines_to_clear" >/dev/tty
-
+                _clear_list_view_footer "_port_forward_view_draw_footer"
                 # Show the prompt in the cleared footer area.
                 printBanner "${C_RED}Delete / Remove Port Forward${T_RESET}"
                 if prompt_yes_no "Permanently ${C_RED}delete${T_RESET} saved forward\n     '${spec}' on '${host}'?" "n"; then
@@ -2484,11 +2502,7 @@ _port_forward_view_key_handler() {
         "$KEY_ENTER")
             if [[ -n "$selected_payload" ]]; then
                 # Move cursor down past the list and its top divider.
-                printf '\n' >/dev/tty
-                # The area to clear is the 2 lines of footer text + 1 bottom divider line.
-                local lines_to_clear=3
-                clear_lines_down "$lines_to_clear" >/dev/tty
-
+                _clear_list_view_footer "_port_forward_view_draw_footer"
                 if [[ -n "$pid" ]]; then
                     # Action: Deactivate
                     if prompt_yes_no "Stop port forward\n     ${spec} on ${host}?" "y"; then
@@ -2626,15 +2640,7 @@ _host_centric_view_key_handler() {
         "$KEY_ENTER")
             if [[ -n "$selected_host" ]]; then
                 # The cursor is at the end of the list content.
-                # Move down one line to be past the top divider.
-                printf '\n' >/dev/tty
-                # Calculate how many lines the footer is currently using.
-                local footer_content; footer_content=$(_host_centric_view_draw_footer)
-                local footer_lines; footer_lines=$(echo -e "$footer_content" | wc -l)
-                # The area to clear is the footer text + 1 bottom divider line.
-                local lines_to_clear=$(( footer_lines + 1 ))
-                clear_lines_down "$lines_to_clear" >/dev/tty
-
+                _clear_list_view_footer "_host_centric_view_draw_footer"
                 # The cursor is now at the start of where the footer text was.
                 # Show the prompt here.
                 if prompt_yes_no "Connect to '${selected_host}'?" "y"; then
@@ -2648,14 +2654,7 @@ _host_centric_view_key_handler() {
             ;;
         'a'|'A')
             # Move cursor down past the list and its top divider.
-            printf '\n' >/dev/tty
-            # Calculate how many lines the footer is currently using.
-            local footer_content; footer_content=$(_host_centric_view_draw_footer)
-            local footer_lines; footer_lines=$(echo -e "$footer_content" | wc -l)
-            # The area to clear is the footer text + 1 bottom divider line.
-            local lines_to_clear=$(( footer_lines + 1 ))
-            clear_lines_down "$lines_to_clear" >/dev/tty
-
+            _clear_list_view_footer "_host_centric_view_draw_footer"
             # Show the prompt in the cleared footer area.
             printBanner "${C_GREEN}Add New SSH Host${T_RESET}"
             local -a add_options=("Create a new host from scratch" "Clone settings from an existing host")
@@ -2675,14 +2674,7 @@ _host_centric_view_key_handler() {
         'd'|'D')
             if [[ -n "$selected_host" ]]; then
                 # Move cursor down past the list and its top divider.
-                printf '\n' >/dev/tty
-                # Calculate how many lines the footer is currently using.
-                local footer_content; footer_content=$(_host_centric_view_draw_footer)
-                local footer_lines; footer_lines=$(echo -e "$footer_content" | wc -l)
-                # The area to clear is the footer text + 1 bottom divider line.
-                local lines_to_clear=$(( footer_lines + 1 ))
-                clear_lines_down "$lines_to_clear" >/dev/tty
-
+                _clear_list_view_footer "_host_centric_view_draw_footer"
                 # Show the prompt in the cleared footer area.
                 printBanner "${C_RED}Delete / Remove Host${T_RESET}"
                 if prompt_yes_no "Are you sure you want to ${C_RED}remove${T_RESET} '${selected_host}'?\n    This will permanently delete the host from your config." "n"; then
@@ -2831,12 +2823,7 @@ _key_view_key_handler() {
             ;;
         'a'|'A')
             # Move cursor down past the list and its bottom divider.
-            printf '\n' >/dev/tty
-
-            # Footer is 3 lines + 1 bottom divider line.
-            local lines_to_clear=4
-            clear_lines_down "$lines_to_clear" >/dev/tty
-
+            _clear_list_view_footer "_key_view_draw_footer"
             # Show the prompt in the cleared footer area.
             printBanner "${C_GREEN}Add New SSH Key${T_RESET}"
             local -a key_types=("ed25519 (recommended)" "rsa (legacy, 4096 bits)")
@@ -2862,12 +2849,7 @@ _key_view_key_handler() {
         'd'|'D')
             if [[ -n "$selected_key_path" ]]; then
                 # Move cursor down past the list and its bottom divider.
-                printf '\n' >/dev/tty
-
-                # Footer is 3 lines + 1 bottom divider line.
-                local lines_to_clear=4
-                clear_lines_down "$lines_to_clear" >/dev/tty
-
+                _clear_list_view_footer "_key_view_draw_footer"
                 # Build the multi-line question for the prompt.
                 local pub_key_path="${selected_key_path}.pub"
                 printBanner "${C_RED}Delete Key${T_RESET}"
