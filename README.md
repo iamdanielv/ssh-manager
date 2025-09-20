@@ -12,39 +12,43 @@ It is a single, self-contained `bash` script with no external dependencies beyon
 
 ## ✨ Features
 
-The script is organized into three main interactive views and an advanced tools menu.
+The project is split into two scripts with distinct features:
 
-### 🖥️ Server Management
+### `ssh-manager.sh` (Main Script)
 
-- **Connect**: Interactively select a host and connect with `ssh`.
-- **Add**: Add new hosts with a step-by-step wizard or by cloning an existing host.
-- **Edit**: Modify host parameters using a simple wizard or open the host's entire config block in your `$EDITOR` for advanced changes.
-- **Manage**: `delete`, `rename`, and `clone` hosts with ease.
-- **Test**: Test the connection to a single host or run parallel tests for all configured hosts.
+The main script provides a TUI for all your common, day-to-day SSH tasks.
 
-### 🔑 Key Management
+- **Server Management**:
+  - Interactively select a host and connect.
+  - Add new hosts from scratch or by cloning an existing one.
+  - Edit host parameters (alias, hostname, user, port, key file) using a step-by-step wizard.
+  - `delete` and `clone` hosts.
+  - Test the connection to a single host or all hosts in parallel.
+- **Key Management**:
+  - Generate new `ed25519` or `rsa` key pairs.
+  - `delete` and `rename` key pairs.
+  - Copy public keys to a remote server using `ssh-copy-id`.
+  - Re-generate a public key from a private key.
+  - View public key contents.
+- **Port Forwarding**:
+  - Save, manage, and activate port forward configurations (`~/.ssh/port_forwards.conf`).
+  - View live status of active forwards.
+  - `add`, `edit`, `delete`, and `clone` saved configurations.
+- **Direct Config Editing**:
+  - A top-level menu option provides a shortcut to open your entire `~/.ssh/config` file in your default `$EDITOR`.
 
-- **Generate**: Create new `ed25519` or `rsa` key pairs.
-- **Manage**: `delete` and `rename` key pairs (private and public).
-- **Copy to Server**: Use `ssh-copy-id` to install your public key on a remote server.
-- **Recover**: Re-generate a public key (`.pub`) from its private key file.
-- **View**: Display the contents of a public key.
+### `advanced-ssh-manager.sh` (Advanced Tools)
 
-### 🔌 Port Forwarding
+This script provides a focused TUI for more complex or potentially destructive operations.
 
-- **Saved Forwards**: Save, manage, and activate port forward configurations. All saved forwards are stored in `~/.ssh/port_forwards.conf`.
-- **Live Status**: View which of your saved forwards are currently `[ACTIVE]` or `[INACTIVE]`.
-- **Manage**: `add`, `edit`, `delete`, and `clone` saved forward configurations.
-- **Activate/Deactivate**: Easily start and stop forwards with a single keypress.
-
-### 🛠️ Advanced Tools
-
-- **Direct Editing**: Open your entire `~/.ssh/config` file in your `$EDITOR`.
+- **Advanced Editing**: Open a specific host's entire configuration block in your `$EDITOR`.
 - **Re-order**: Interactively change the order of host blocks in your config file.
 - **Backup**: Create a timestamped backup of your config file.
-- **Import/Export**: Export selected host configurations to a file or import them from a file into your main config.
+- **Import/Export**: Export selected host configurations to a new file or import them from a file into your main config.
 
 ## 🚀 Quick Actions
+
+**Note:** The following actions apply to the main `ssh-manager.sh` script.
 
 Bypass the interactive menus for quick, direct actions:
 
@@ -58,17 +62,25 @@ Bypass the interactive menus for quick, direct actions:
 
 ## 📦 Installation
 
-1. Download the `ssh-manager.sh` script.
+This project now consists of two scripts:
+
+- `ssh-manager.sh`: The main script for day-to-day server, key, and port-forwarding management.
+- `advanced-ssh-manager.sh`: A separate script for advanced tasks like backups, import/export, and direct file editing.
+
+1. Download the script(s) you need.
 2. Make it executable:
 
     ```bash
     chmod +x ssh-manager.sh
+    chmod +x advanced-ssh-manager.sh
     ```
 
 3. Run it:
 
     ```bash
     ./ssh-manager.sh
+    # or for advanced tools:
+    ./advanced-ssh-manager.sh
     ```
 
     For convenience, place it in a directory that is in your `PATH` (e.g., `~/.local/bin` or `/usr/local/bin`) to run it from anywhere.

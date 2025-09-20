@@ -348,43 +348,6 @@ interactive_single_select_menu() {
     _interactive_menu "single" "$prompt" "$header" "$@"
 }
 
-interactive_reorder_menu() {
-    if ! [[ -t 0 ]]; then printErrMsg "Not an interactive session." >&2; return 1; fi
-    local prompt="$1"; shift; local -a current_items=("$@"); local num_items=${#current_items[@]}
-    if [[ $num_items -eq 0 ]]; then printErrMsg "No items provided to reorder menu." >&2; return 1; fi
-    local current_pos=0; local held_item_idx=-1
-    _draw_reorder_menu() {
-        local output=""; for i in "${!current_items[@]}"; do
-            local pointer=" "; local highlight_start=""; local highlight_end=""
-            if (( i == current_pos )); then pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"; fi
-            if (( i == held_item_idx )); then highlight_start="${T_REVERSE}"; highlight_end="${T_RESET}"; fi
-            output+="  ${pointer} ${highlight_start}${current_items[i]}${T_CLEAR_LINE}${highlight_end}${T_RESET}"$'\n'; done;
-        printf '%s' "$output"; }
-    printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty; trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty' EXIT
-    printf '%s\n' "${T_QST_ICON} ${prompt}" >/dev/tty; printf '%s\n' "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
-    _draw_reorder_menu >/dev/tty
-    printf '%s\n' "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
-    printf '%s(%s↓/↑%s move, %sspace%s grab/drop, %senter%s save, %sq/esc%s cancel)%s\n' "${C_GRAY}" "${C_L_CYAN}" "${C_GRAY}" "${C_L_CYAN}" "${C_GRAY}" "${C_L_GREEN}" "${C_GRAY}" "${C_L_YELLOW}" "${C_GRAY}" "${T_RESET}" >/dev/tty
-
-    move_cursor_up 2 # Move to end of items list
-
-    local key; local lines_above=2; local lines_below=2; while true; do
-        move_cursor_up "$num_items"; key=$(read_single_char </dev/tty)
-        case "$key" in
-            "$KEY_UP"|"k")
-                if (( held_item_idx != -1 )); then
-                    if (( held_item_idx > 0 )); then local next_idx=$((held_item_idx - 1)); local tmp="${current_items[held_item_idx]}"; current_items[held_item_idx]="${current_items[next_idx]}"; current_items[next_idx]="$tmp"; held_item_idx=$next_idx; current_pos=$next_idx; fi
-                else current_pos=$(( (current_pos - 1 + num_items) % num_items )); fi;;
-            "$KEY_DOWN"|"j")
-                if (( held_item_idx != -1 )); then
-                    if (( held_item_idx < num_items - 1 )); then local next_idx=$((held_item_idx + 1)); local tmp="${current_items[held_item_idx]}"; current_items[held_item_idx]="${current_items[next_idx]}"; current_items[next_idx]="$tmp"; held_item_idx=$next_idx; current_pos=$next_idx; fi
-                else current_pos=$(( (current_pos + 1) % num_items )); fi;;
-            ' ') (( held_item_idx == current_pos )) && held_item_idx=-1 || held_item_idx=$current_pos ;;
-            "$KEY_ENTER") clear_lines_down $((num_items + lines_below)); clear_lines_up "$lines_above"; printf "%s\n" "${current_items[@]}"; return 0;;
-            "$KEY_ESC"|"q") clear_lines_down $((num_items + lines_below)); clear_lines_up "$lines_above"; return 1;;
-        esac; _draw_reorder_menu >/dev/tty; done
-}
-
 # (Private) A generic, reusable interactive list view.
 # This function abstracts the common pattern of displaying a list of items,
 # handling navigation, and dispatching actions.
@@ -1740,90 +1703,6 @@ clone_ssh_host() {
     fi
 }
 
-# (Private) The worker function that performs the file re-ordering.
-# This is separated to be used with `run_with_spinner`.
-# It assumes a backup has already been made.
-_reorder_ssh_hosts_worker() {
-    local backup_file="$1"
-    shift
-    local -a new_ordered_hosts=("$@")
-
-    # 1. Extract header (content before any Host block) from the backup.
-    local header_content
-    header_content=$(awk '/^[ \t]*[Hh][Oo][Ss][Tt][ \t]/ {exit} 1' "$backup_file")
-
-    # 2. Extract the footer (Host * block) from the backup, if it exists.
-    local footer_content
-    footer_content=$(_get_host_block_from_config "*" "$backup_file")
-
-    # 3. Extract all managed host blocks from the backup into a map.
-    local -A host_blocks
-    mapfile -t original_hosts < <(get_ssh_hosts) # Read from original config to get keys
-    for host in "${original_hosts[@]}"; do
-        host_blocks["$host"]=$(_get_host_block_from_config "$host" "$backup_file")
-    done
-
-    # 4. Overwrite the original config file by assembling the pieces.
-    # Start with the header.
-    echo -n "$header_content" > "$SSH_CONFIG_PATH"
-
-    # Append the re-ordered managed host blocks.
-    for host in "${new_ordered_hosts[@]}"; do
-        # Ensure there's a newline before appending each block. Using printf for portability.
-        printf '\n%s' "${host_blocks[$host]}" >> "$SSH_CONFIG_PATH"
-    done
-
-    # Append the footer if it existed.
-    if [[ -n "$footer_content" ]]; then
-        printf '\n%s' "${footer_content}" >> "$SSH_CONFIG_PATH"
-    fi
-
-    # 5. Clean up multiple blank lines that may have been introduced.
-    local temp_file; temp_file=$(mktemp)
-    cat -s "$SSH_CONFIG_PATH" > "$temp_file" && mv "$temp_file" "$SSH_CONFIG_PATH"
-}
-
-# Allows the user to interactively re-order the host blocks in the config file.
-reorder_ssh_hosts() {
-    printBanner "Re-order SSH Hosts"
-    mapfile -t original_hosts < <(get_ssh_hosts)
-    if [[ ${#original_hosts[@]} -lt 2 ]]; then
-        printInfoMsg "Fewer than two hosts found. Nothing to re-order."
-        return
-    fi
-
-    local reordered_output
-    reordered_output=$(interactive_reorder_menu "Re-order hosts:" "${original_hosts[@]}")
-    [[ $? -ne 0 ]] && { printInfoMsg "Re-ordering cancelled."; return; }
-    mapfile -t new_ordered_hosts <<< "$reordered_output"
-
-    if [[ "${new_ordered_hosts[*]}" == "${original_hosts[*]}" ]]; then
-        printInfoMsg "Order is unchanged. No action taken."
-        return
-    fi
-
-    printWarnMsg "This action will rewrite your SSH config file to apply the new order."
-    if ! prompt_yes_no "This may lose comments between hosts. A backup will be created.\n    Continue with re-ordering?" "n"; then
-        printInfoMsg "Re-ordering cancelled."
-        return
-    fi
-
-    # Create a backup first.
-    local backup_dir="${SSH_DIR}/backups"; mkdir -p "$backup_dir"
-    local timestamp; timestamp=$(date +"%Y-%m-%d_%H-%M-%S")
-    local backup_file="${backup_dir}/config_reorder_${timestamp}.bak"
-    cp "$SSH_CONFIG_PATH" "$backup_file"
-    printInfoMsg "Backup created at: ${C_L_BLUE}${backup_file/#$HOME/\~}${T_RESET}"
-
-    if run_with_spinner "Applying new host order..." \
-        _reorder_ssh_hosts_worker "$backup_file" "${new_ordered_hosts[@]}"; then
-        printOkMsg "SSH config file has been re-ordered successfully."
-    else
-        printErrMsg "Failed to re-order hosts. Your original config is safe."
-        printInfoMsg "The backup of your config is available at: ${backup_file/#$HOME/\~}"
-    fi
-}
-
 # (Private) Checks for and offers to remove an orphaned key file.
 # An orphaned key is one that is no longer referenced by any host in the SSH config.
 # This is typically called after a host has been removed from the config.
@@ -1893,130 +1772,6 @@ remove_ssh_host() {
 
     # Pass the actual key file path to the cleanup function.
     _cleanup_orphaned_key "$identity_file_to_check"
-}
-
-# Exports selected SSH host configurations to a file.
-export_ssh_hosts() {
-    printBanner "Export SSH Hosts"
-
-    mapfile -t hosts < <(get_ssh_hosts)
-    if [[ ${#hosts[@]} -eq 0 ]]; then
-        printInfoMsg "No hosts found to export."
-        return
-    fi
-
-    # Get the detailed menu options to show more info to the user.
-    local -a menu_options
-    get_detailed_ssh_hosts_menu_options menu_options
-
-    # The "All" option is a feature of interactive_multi_select_menu.
-    local menu_output
-    local header
-    # The 5 spaces are to align the header with the menu items, which are prefixed by '❯ [ ] '.
-    header=$(printf "     %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "user@hostname[:port]")
-    menu_output=$(interactive_multi_select_menu "Select hosts to export (space to toggle, enter to confirm):" "$header" "All" "${menu_options[@]}")
-    if [[ $? -ne 0 ]]; then
-        printInfoMsg "Export cancelled."
-        return
-    fi
-
-    mapfile -t selected_indices < <(echo "$menu_output")
-
-    if [[ ${#selected_indices[@]} -eq 0 ]]; then
-        printInfoMsg "No hosts selected for export."
-        return
-    fi
-
-    local -a hosts_to_export
-    for index in "${selected_indices[@]}"; do
-        # The menu options are "All", then hosts[0], hosts[1], ...
-        # So index 1 from menu corresponds to hosts[0].
-        if (( index > 0 )); then
-            hosts_to_export+=("${hosts[index-1]}")
-        fi
-    done
-
-    if [[ ${#hosts_to_export[@]} -eq 0 ]]; then
-        printInfoMsg "No hosts selected for export."
-        return
-    fi
-
-    local export_file
-    prompt_for_input "Enter path for export file" export_file "ssh_hosts_export.conf"
-    local expanded_export_file="${export_file/#\~/$HOME}"
-
-    # Clear the file or create it
-    true > "$expanded_export_file"
-
-    printInfoMsg "Exporting ${#hosts_to_export[@]} host(s)..."
-    for host in "${hosts_to_export[@]}"; do
-        # Get the block for the host and append it to the export file
-        echo "" >> "$expanded_export_file" # Add a newline for separation
-        _get_host_block_from_config "$host" "$SSH_CONFIG_PATH" >> "$expanded_export_file"
-    done
-
-    # Clean up potential leading newline from the first entry
-    sed -i '1{/^$/d;}' "$expanded_export_file"
-
-    printOkMsg "Successfully exported ${#hosts_to_export[@]} host(s) to ${C_L_BLUE}${expanded_export_file/#$HOME/\~}${T_RESET}."
-}
-
-# Imports SSH host configurations from a file.
-import_ssh_hosts() {
-    printBanner "Import SSH Hosts"
-
-    local import_file
-    prompt_for_input "Enter path of file to import from" import_file
-    local expanded_import_file="${import_file/#\~/$HOME}"
-
-    if [[ ! -f "$expanded_import_file" ]]; then
-        printErrMsg "Import file not found: ${expanded_import_file/#$HOME/\~}"
-        return 1
-    fi
-
-    # Get hosts from the import file
-    local -a hosts_to_import
-    mapfile -t hosts_to_import < <(awk '/^[Hh]ost / && $2 != "*" {for (i=2; i<=NF; i++) print $i}' "$expanded_import_file")
-
-    if [[ ${#hosts_to_import[@]} -eq 0 ]]; then
-        printInfoMsg "No valid 'Host' entries found in ${expanded_import_file/#$HOME/\~}."
-        return
-    fi
-
-    printInfoMsg "Found ${#hosts_to_import[@]} host(s) to import: ${C_L_CYAN}${hosts_to_import[*]}${T_RESET}"
-
-    local imported_count=0 overwritten_count=0 skipped_count=0
-
-    for host in "${hosts_to_import[@]}"; do
-        if grep -q -E "^\s*Host\s+${host}\s*$" "$SSH_CONFIG_PATH"; then
-            prompt_yes_no "Host '${host}' already exists. Overwrite it?" "n"
-            local choice=$?
-            case $choice in
-                0) # Yes
-                    # Atomically replace the host block
-                    local config_without_host; config_without_host=$(_remove_host_block_from_config "$host");
-                    local new_block; new_block=$(_get_host_block_from_config "$host" "$expanded_import_file")
-                    printf '%s\n\n%s' "$config_without_host" "$new_block" | cat -s > "$SSH_CONFIG_PATH"
-                    ((overwritten_count++))
-                    ;;
-                1) # No
-                    printInfoMsg "Skipping existing host '${host}'."; ((skipped_count++))
-                    ;;
-                2) # Cancel
-                    printInfoMsg "Import operation cancelled by user."
-                    # Break out of the for loop
-                    break
-                    ;;
-            esac
-        else
-            # Host is new, so append it.
-            echo "" >> "$SSH_CONFIG_PATH"; _get_host_block_from_config "$host" "$expanded_import_file" >> "$SSH_CONFIG_PATH"
-            ((imported_count++))
-        fi
-    done
-
-    local summary="Import complete. Added: ${imported_count}, Overwrote: ${overwritten_count}, Skipped: ${skipped_count}."
-    printOkMsg "$summary"
 }
 
 # (Private) Helper to test connection to a specific host using BatchMode.
@@ -2585,7 +2340,7 @@ _port_forward_view_draw_header() {
 
 _port_forward_view_draw_footer() {
     printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC${T_RESET} Back"
-    printMsg "  ${T_BOLD}Actions:${T_RESET}      ${C_L_GREEN}(A)dd${T_RESET} | (${C_L_RED}D${T_RESET})elete | (${C_L_CYAN}E${T_RESET})dit | (${C_L_CYAN}C${T_RESET})lone | ${C_L_GREEN}ENTER${T_RESET} Start/Stop"
+    printMsg "  ${T_BOLD}Actions:${T_RESET}      ${C_L_GREEN}(A)dd${T_RESET} | ${C_L_RED}(D)elete${T_RESET} | ${C_L_CYAN}(E)dit${T_RESET} | ${C_L_BLUE}(C)lone${T_RESET} | ${C_L_GREEN}ENTER${T_RESET} Start/Stop"
 }
 
 _port_forward_view_refresh() {
@@ -2664,28 +2419,6 @@ interactive_port_forward_view() {
         "_port_forward_view_refresh" \
         "_port_forward_view_key_handler" \
         "_port_forward_view_draw_footer"
-}
-
-# Backs up the SSH config file to a timestamped file.
-backup_ssh_config() {
-    printBanner "Backup SSH Config"
-
-    local backup_dir="${SSH_DIR}/backups"
-    mkdir -p "$backup_dir"
-
-    local timestamp
-    timestamp=$(date +"%Y-%m-%d_%H-%M-%S")
-    local backup_file="${backup_dir}/config_${timestamp}.bak"
-
-    if run_with_spinner "Creating backup of ${SSH_CONFIG_PATH}..." \
-        cp "$SSH_CONFIG_PATH" "$backup_file"
-    then
-        # The spinner already prints a success message. We can add more detail.
-        printInfoMsg "Backup saved to: ${C_L_BLUE}${backup_file/#$HOME/\~}${T_RESET}"
-    else
-        # The spinner will print the error from `cp`.
-        printErrMsg "Failed to create backup."
-    fi
 }
 
 # (Private) A wrapper for running a menu action.
@@ -2787,8 +2520,8 @@ _server_view_draw_header() {
 
 _server_view_draw_footer() {
     printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC${T_RESET} Back"
-    printMsg "  ${T_BOLD}Host Actions:${T_RESET} ${C_L_GREEN}(A)dd${T_RESET} | ${C_L_RED}(D)elete${T_RESET} | (${C_L_CYAN}C${T_RESET})lone"
-    printMsg "  ${T_BOLD}Host Edit:${T_RESET}    (${C_L_CYAN}e${T_RESET})dit - wizard | (${C_L_CYAN}E${T_RESET})dit - advanced"
+    printMsg "  ${T_BOLD}Host Actions:${T_RESET} ${C_L_GREEN}(A)dd${T_RESET} | ${C_L_RED}(D)elete${T_RESET} | ${C_L_BLUE}(C)lone${T_RESET}"
+    printMsg "  ${T_BOLD}Host Edit:${T_RESET}    ${C_L_CYAN}(E)dit${T_RESET} host details"
     printMsg "  ${T_BOLD}Connection:${T_RESET}   ${C_L_YELLOW}ENTER${T_RESET} Connect | (${C_L_CYAN}t${T_RESET})est selected | (${C_L_CYAN}T${T_RESET})est all"
 }
 
@@ -2860,8 +2593,7 @@ _server_view_key_handler() {
             fi
             out_result="refresh"
             ;;
-        'e') if [[ -n "$selected_host" ]]; then run_menu_action "edit_ssh_host" "$selected_host"; out_result="refresh"; fi ;;
-        'E') if [[ -n "$selected_host" ]]; then run_menu_action "edit_ssh_host_in_editor" "$selected_host"; out_result="refresh"; fi ;;
+        'e'|'E') if [[ -n "$selected_host" ]]; then run_menu_action "edit_ssh_host" "$selected_host"; out_result="refresh"; fi ;;
         'd'|'D')
             if [[ -n "$selected_host" ]]; then
                 # Move cursor down past the list and its top divider.
@@ -2928,8 +2660,8 @@ _key_view_draw_header() {
 
 _key_view_draw_footer() {
     printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC${T_RESET} Back"
-    printMsg "  ${T_BOLD}Key Actions:${T_RESET}  (${C_L_GREEN}A${T_RESET})dd Key | (${C_L_RED}D${T_RESET})elete | (${C_L_CYAN}R${T_RESET})ename"
-    printMsg "                (${C_L_CYAN}V${T_RESET})iew public | (${C_L_CYAN}C${T_RESET})opy to Server | Re-gen (${C_L_CYAN}P${T_RESET})ublic"
+    printMsg "  ${T_BOLD}Key Actions:${T_RESET}  ${C_L_GREEN}(A)dd${T_RESET} Key | ${C_L_RED}(D)elete${T_RESET} | ${C_L_CYAN}(R)ename${T_RESET}"
+    printMsg "                (${C_L_CYAN}V${T_RESET})iew public | (${C_L_BLUE}C${T_RESET})opy to Server | Re-gen (${C_L_CYAN}P${T_RESET})ublic"
 }
 
 # (Private) Verifies a file is a valid private key and extracts its details.
@@ -3069,18 +2801,6 @@ interactive_key_management_view() {
         "_key_view_draw_footer"
 }
 
-advanced_menu() {
-    local -a menu_definition=(
-        "Open SSH config in editor"      "SPECIAL_EDIT_CONFIG"
-        "Edit host block in editor"      "edit_ssh_host_in_editor"
-        "Reorder hosts in config file"   "reorder_ssh_hosts"
-        "Backup SSH config"              "backup_ssh_config"
-        "Export hosts to a file"         "export_ssh_hosts"
-        "Import hosts from a file"       "import_ssh_hosts"
-    )
-    _run_submenu "Advanced Tools" "${menu_definition[@]}"
-}
-
 # Bypasses the main menu and goes directly to the host selection for a direct connection.
 direct_connect() {
     local selected_host
@@ -3142,7 +2862,7 @@ main_loop() {
             "Server Management"
             "Key Management"
             "Port Forwarding"
-            "Advanced Tools"
+            "Open SSH config in editor"
             "Exit"
         )
 
@@ -3154,7 +2874,20 @@ main_loop() {
         "Server Management") interactive_server_management_view ;;
         "Key Management") interactive_key_management_view ;;
         "Port Forwarding") interactive_port_forward_view ;;
-        "Advanced Tools") advanced_menu ;;
+        "Open SSH config in editor")
+            local editor="${EDITOR:-nvim}"
+            if ! command -v "${editor}" &>/dev/null; then
+                # Clear screen to show the error message prominently.
+                clear; printBanner "Error"
+                printErrMsg "Editor '${editor}' not found. Please set the EDITOR environment variable."
+                prompt_to_continue
+            else
+                # Show cursor for the editor, then hide it again upon return to the TUI.
+                printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty
+                "${editor}" "${SSH_CONFIG_PATH}"
+                printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty
+            fi
+            ;;
         "Exit") break ;;
         esac
     done
