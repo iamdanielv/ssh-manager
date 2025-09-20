@@ -2890,7 +2890,7 @@ _main_menu_view_refresh() {
         "${C_L_CYAN}(S)erver${T_RESET} Management"
         "${C_L_MAGENTA}(K)ey${T_RESET} Management"
         "${C_L_CYAN}(P)ort${T_RESET} Forwarding"
-        "${C_L_BLUE}E)dit${T_RESET} SSH config in editor"
+        "${C_L_BLUE}(E)dit${T_RESET} SSH config in editor"
         "${C_YELLOW}(Q)uit${T_RESET}"
     )
 
