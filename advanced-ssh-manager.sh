@@ -32,10 +32,22 @@ edit_ssh_host_in_editor() {
     printInfoMsg "Opening '${host_to_edit}' in '${editor}'..."; printInfoMsg "(Save and close the editor to apply changes,\n    or exit without saving to cancel)"; prompt_to_continue
     clear_lines_up 3; "${editor}" "$temp_file"
     local new_block; new_block=$(grep -v "vim: set filetype=sshconfig:" "$temp_file")
-    if [[ "$new_block" == "$original_block" ]]; then printInfoMsg "No changes detected. Configuration for '${host_to_edit}' remains unchanged."; return; fi
+    if [[ "$new_block" == "$original_block" ]]; then printInfoMsg "No changes detected.\n    Configuration for '${host_to_edit}' remains unchanged."; return; fi
     local config_without_host; config_without_host=$(_remove_host_block_from_config "$host_to_edit")
     printf '%s\n\n%s' "$config_without_host" "$new_block" | cat -s > "$SSH_CONFIG_PATH"
     printOkMsg "Host '${host_to_edit}' has been updated from editor."
+}
+
+open_ssh_config_in_editor() {
+    printBanner "Open SSH Config in Editor"
+    local editor="${EDITOR:-nvim}"
+    if ! command -v "${editor}" &>/dev/null; then
+        printErrMsg "Editor '${editor}' not found. Please set the EDITOR environment variable."
+    else
+        printInfoMsg "Opening ${SSH_CONFIG_PATH} in '${editor}'..."
+        # run_menu_action (the caller) handles showing/hiding cursor
+        "${editor}" "${SSH_CONFIG_PATH}"
+    fi
 }
 
 export_ssh_hosts() {
@@ -113,90 +125,31 @@ _setup_environment() {
 
 # --- Main Menu View Helpers ---
 
-_advanced_menu_view_draw_header() {
-    printMsg "${T_QST_ICON} What would you like to do?"
+_advanced_host_view_draw_header() {
+    local header; header=$(printf "   %-20s %s" "HOST ALIAS" "user@hostname[:port]")
+    printMsg "${C_WHITE}${header}${T_RESET}"
 }
 
-_advanced_menu_view_draw_footer() {
-    printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC Quit${T_RESET}"
-    printMsg "  ${T_BOLD}Shortcuts:${T_RESET}    ${C_BLUE}(O)pen${T_RESET} | ${C_BLUE}(E)dit${T_RESET} | ${C_L_GREEN}(B)ackup${T_RESET}"
-    printMsg "                ${C_YELLOW}E(x)port${T_RESET} | ${C_YELLOW}(I)mport${T_RESET} | ${C_YELLOW}(Q)uit${T_RESET}"
+_advanced_host_view_draw_footer() {
+    printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET}"
+    printMsg "  ${T_BOLD}Shortcuts:${T_RESET}    ${C_L_BLUE}(O)pen${T_RESET} ssh config in editor"
+    printMsg "                ${C_L_CYAN}ENTER/E (E)dit${T_RESET} Selected"
+    printMsg "                ${C_L_GREEN}(B)ackup${T_RESET} config"
+    printMsg "                ${C_L_YELLOW}E(x)port${T_RESET} to file | ${C_L_YELLOW}(I)mport${T_RESET} from file"
 }
 
-_advanced_menu_view_refresh() {
+_advanced_host_view_refresh() {
     local -n out_menu_options="$1"
     local -n out_data_payloads="$2"
-    local -a items=(
-        "${C_L_BLUE}(O)pen${T_RESET} full SSH config in editor"
-        "${C_L_BLUE}(E)dit${T_RESET} a specific host's block in editor"
-        "${C_L_GREEN}(B)ackup${T_RESET} config"
-        "${C_L_YELLOW}E(x)port${T_RESET} selected hosts to a new file"
-        "${C_L_YELLOW}(I)mport${T_RESET} hosts from a file"
-        "${C_L_YELLOW}(Q)uit${T_RESET}"
-    )
-
-    # Find the maximum visible length and store stripped items
-    local max_len=0
-    local -a stripped_items=()
-    for item in "${items[@]}"; do
-        local stripped_item; stripped_item=$(strip_ansi_codes "$item")
-        stripped_items+=("$stripped_item")
-        if (( ${#stripped_item} > max_len )); then
-            max_len=$(( ${#stripped_item} + 1 ))
-        fi
-    done
-
-    # Build the final menu options array, padding each item to the max length
-    out_menu_options=()
-    for i in "${!items[@]}"; do
-        local padding_len=$(( max_len - ${#stripped_items[i]} ))
-        local padded_item
-        printf -v padded_item "%s%*s" "${items[i]}" "$padding_len" ""
-        out_menu_options+=("$padded_item")
-    done
-
-    out_data_payloads=(
-        "open"
-        "edit"
-        "backup"
-        "export"
-        "import"
-        "quit"
-    )
+    # Get raw host names for the data payload
+    mapfile -t out_data_payloads < <(get_ssh_hosts)
+    # Get formatted strings for display, including key info
+    get_detailed_ssh_hosts_menu_options out_menu_options "true"
 }
 
-_perform_advanced_menu_action() {
-    local action="$1"
-    local -n out_result_ref="$2"
-
-    case "$action" in
-        "open")
-            clear; printBanner "Open SSH Config in Editor"
-            local editor="${EDITOR:-nvim}"
-            if ! command -v "${editor}" &>/dev/null; then
-                printErrMsg "Editor '${editor}' not found. Please set the EDITOR environment variable."; prompt_to_continue
-            else
-                printInfoMsg "Opening ${SSH_CONFIG_PATH} in '${editor}'..."
-                printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty
-                "${editor}" "${SSH_CONFIG_PATH}"
-                printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty
-            fi
-            ;;
-        "edit") run_menu_action "edit_ssh_host_in_editor" ;;
-        "backup") run_menu_action "backup_ssh_config" ;;
-        "export") run_menu_action "export_ssh_hosts" ;;
-        "import") run_menu_action "import_ssh_hosts" ;;
-        "quit") out_result_ref="exit" ;;
-    esac
-
-    if [[ "$out_result_ref" != "exit" ]]; then
-        out_result_ref="refresh"
-    fi
-}
-
-_advanced_menu_view_key_handler() {
+_advanced_host_view_key_handler() {
     local key="$1"
-    local selected_action="$2"
+    local selected_host="$2"
     # local selected_index="$3" # Unused
     local -n current_option_ref="$4"
     local num_options="$5"
@@ -207,27 +160,45 @@ _advanced_menu_view_key_handler() {
     case "$key" in
         "$KEY_UP"|"k") if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref - 1 + num_options) % num_options )); fi ;;
         "$KEY_DOWN"|"j") if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref + 1) % num_options )); fi ;;
-        "$KEY_ENTER") if [[ -n "$selected_action" ]]; then _perform_advanced_menu_action "$selected_action" out_result; fi ;;
-        'o'|'O') _perform_advanced_menu_action "open" out_result ;;
-        'e'|'E') _perform_advanced_menu_action "edit" out_result ;;
-        'b'|'B') _perform_advanced_menu_action "backup" out_result ;;
-        'x'|'X') _perform_advanced_menu_action "export" out_result ;;
-        'i'|'I') _perform_advanced_menu_action "import" out_result ;;
-        'q'|'Q'|"$KEY_ESC") _perform_advanced_menu_action "quit" out_result ;;
+        "$KEY_ENTER"|'e'|'E')
+            if [[ -n "$selected_host" ]]; then
+                run_menu_action "edit_ssh_host_in_editor" "$selected_host"
+                out_result="refresh"
+            fi
+            ;;
+        'o'|'O')
+            run_menu_action "open_ssh_config_in_editor"
+            out_result="refresh"
+            ;;
+        'b'|'B')
+            run_menu_action "backup_ssh_config"
+            out_result="refresh"
+            ;;
+        'x'|'X')
+            run_menu_action "export_ssh_hosts"
+            out_result="refresh"
+            ;;
+        'i'|'I')
+            run_menu_action "import_ssh_hosts"
+            out_result="refresh"
+            ;;
+        'q'|'Q'|"$KEY_ESC")
+            out_result="exit"
+            ;;
     esac
 }
 
-interactive_advanced_menu_view() {
+interactive_advanced_host_view() {
     _interactive_list_view \
-        "Advanced SSH Manager Tools" \
-        "_advanced_menu_view_draw_header" \
-        "_advanced_menu_view_refresh" \
-        "_advanced_menu_view_key_handler" \
-        "_advanced_menu_view_draw_footer"
+        "Advanced SSH Manager" \
+        "_advanced_host_view_draw_header" \
+        "_advanced_host_view_refresh" \
+        "_advanced_host_view_key_handler" \
+        "_advanced_host_view_draw_footer"
 }
 
 main_loop() {
-    interactive_advanced_menu_view
+    interactive_advanced_host_view
     clear
     printOkMsg "Goodbye!"
 }
