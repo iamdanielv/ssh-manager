@@ -2489,12 +2489,17 @@ _common_host_view_draw_header() {
 }
 
 _host_centric_view_draw_footer() {
-    printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET}"
-    printMsg "  ${T_BOLD}Host Actions:${T_RESET} ${C_L_GREEN}(A)dd${T_RESET} | ${C_L_RED}(D)elete${T_RESET} | ${C_L_BLUE}(C)lone${T_RESET}"
-    printMsg "  ${T_BOLD}Host Edit:${T_RESET}    ${C_L_CYAN}(E)dit${T_RESET} host details"
-    printMsg "  ${T_BOLD}Manage:${T_RESET}       SSH ${C_MAGENTA}(K)eys${T_RESET} | ${C_L_CYAN}(P)ort${T_RESET} Forwards"
-    printMsg "                ${C_L_BLUE}(O)pen${T_RESET} ssh config in editor"
-    printMsg "  ${T_BOLD}Connection:${T_RESET}   ${C_L_YELLOW}ENTER${T_RESET} Connect | (${C_L_CYAN}t${T_RESET})est selected | (${C_L_CYAN}T${T_RESET})est all"
+    # This function now depends on _HOST_VIEW_FOOTER_EXPANDED being set in its calling scope.
+    if [[ "${_HOST_VIEW_FOOTER_EXPANDED:-0}" -eq 1 ]]; then
+        printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET} | ${C_GRAY}? for fewer options${T_RESET}"
+        printMsg "  ${T_BOLD}Host Actions:${T_RESET} ${C_L_GREEN}(A)dd${T_RESET} | ${C_L_RED}(D)elete${T_RESET} | ${C_L_BLUE}(C)lone${T_RESET}"
+        printMsg "  ${T_BOLD}Host Edit:${T_RESET}    ${C_L_CYAN}(E)dit${T_RESET} host details"
+        printMsg "  ${T_BOLD}Manage:${T_RESET}       SSH ${C_MAGENTA}(K)eys${T_RESET} | ${C_L_CYAN}(P)ort${T_RESET} Forwards"
+        printMsg "                ${C_L_BLUE}(O)pen${T_RESET} ssh config in editor"
+        printMsg "  ${T_BOLD}Connection:${T_RESET}   ${C_L_YELLOW}ENTER${T_RESET} Connect | (${C_L_CYAN}t${T_RESET})est selected | (${C_L_CYAN}T${T_RESET})est all"
+    else
+        printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET} | ${C_GRAY}? for more options${T_RESET}"
+    fi
 }
 
 # (Private) A shared function to refresh the data for host list views.
@@ -2523,13 +2528,21 @@ _host_centric_view_key_handler() {
         "$KEY_DOWN"|"j")
             if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref + 1) % num_options )); fi
             ;;
+        '/'|'?')
+            # This handler now depends on _HOST_VIEW_FOOTER_EXPANDED being set in its calling scope.
+            _HOST_VIEW_FOOTER_EXPANDED=$(( 1 - ${_HOST_VIEW_FOOTER_EXPANDED:-0} ))
+            out_result="refresh" # Trigger a full redraw to show the new footer
+            ;;
         "$KEY_ENTER")
             if [[ -n "$selected_host" ]]; then
                 # The cursor is at the end of the list content.
                 # Move down one line to be past the top divider.
                 printf '\n' >/dev/tty
-                # The area to clear is the 6 lines of footer text + 1 bottom divider line.
-                local lines_to_clear=7
+                # Calculate how many lines the footer is currently using.
+                local footer_content; footer_content=$(_host_centric_view_draw_footer)
+                local footer_lines; footer_lines=$(echo -e "$footer_content" | wc -l)
+                # The area to clear is the footer text + 1 bottom divider line.
+                local lines_to_clear=$(( footer_lines + 1 ))
                 clear_lines_down "$lines_to_clear" >/dev/tty
 
                 # The cursor is now at the start of where the footer text was.
@@ -2546,8 +2559,11 @@ _host_centric_view_key_handler() {
         'a'|'A')
             # Move cursor down past the list and its top divider.
             printf '\n' >/dev/tty
-            # The area to clear is the 6 lines of footer text + 1 bottom divider line.
-            local lines_to_clear=7
+            # Calculate how many lines the footer is currently using.
+            local footer_content; footer_content=$(_host_centric_view_draw_footer)
+            local footer_lines; footer_lines=$(echo -e "$footer_content" | wc -l)
+            # The area to clear is the footer text + 1 bottom divider line.
+            local lines_to_clear=$(( footer_lines + 1 ))
             clear_lines_down "$lines_to_clear" >/dev/tty
 
             # Show the prompt in the cleared footer area.
@@ -2570,8 +2586,11 @@ _host_centric_view_key_handler() {
             if [[ -n "$selected_host" ]]; then
                 # Move cursor down past the list and its top divider.
                 printf '\n' >/dev/tty
-                # The area to clear is the 6 lines of footer text + 1 bottom divider line.
-                local lines_to_clear=7
+                # Calculate how many lines the footer is currently using.
+                local footer_content; footer_content=$(_host_centric_view_draw_footer)
+                local footer_lines; footer_lines=$(echo -e "$footer_content" | wc -l)
+                # The area to clear is the footer text + 1 bottom divider line.
+                local lines_to_clear=$(( footer_lines + 1 ))
                 clear_lines_down "$lines_to_clear" >/dev/tty
 
                 # Show the prompt in the cleared footer area.
@@ -2630,6 +2649,10 @@ _host_centric_view_key_handler() {
 }
 
 interactive_host_centric_view() {
+    # This variable will be visible to the functions called by _interactive_list_view
+    # because they are executed in the same shell process, not a subshell.
+    local _HOST_VIEW_FOOTER_EXPANDED=0
+
     _interactive_list_view \
         "SSH Manager" \
         "_common_host_view_draw_header" \
