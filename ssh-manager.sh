@@ -228,9 +228,10 @@ prompt_yes_no() {
 
 prompt_to_continue() {
     printInfoMsg "Press any key to continue..." >/dev/tty
-    # -s: silent, -n 1: read 1 char, -r: raw
+    # Use read_single_char to correctly handle multi-byte sequences like arrow keys,
+    # preventing leftover characters in the input buffer. The output is discarded.
     # We redirect to /dev/tty to ensure it works even if stdout is captured.
-    read -rsn1 </dev/tty
+    read_single_char >/dev/null </dev/tty
     # Clear the "Press any key..." message.
     clear_lines_up 1
 }
