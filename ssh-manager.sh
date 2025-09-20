@@ -794,17 +794,45 @@ get_detailed_ssh_hosts_menu_options() {
         # Build the details part of the string with all its colors.
         local details_string="${C_L_CYAN}${current_user:-?}@${current_hostname:-?}${port_info}${key_info}"
 
-        # Use a simple printf to combine the padded host alias and the details string.
-        # This is more robust than having color codes inside the printf format string.
-        local formatted_string; formatted_string=$(printf "%-20s %b" "${host_alias}" "${details_string}")
+        # Pad or truncate the details_string to a visual width of 46 characters.
+        local stripped_details; stripped_details=$(strip_ansi_codes "$details_string")
+        local len=${#stripped_details}
+        local max_len=46
 
-        # Now, pad the entire string to a minimum width, accounting for ANSI codes.
-        local stripped_string; stripped_string=$(strip_ansi_codes "$formatted_string")
-        local padding_needed=$(( 67 - ${#stripped_string} ))
-        if (( padding_needed > 0 )); then
-            # Use printf -v to append spaces to the variable without forking a subshell.
-            printf -v formatted_string "%s%*s" "$formatted_string" "$padding_needed" ""
+        if (( len > max_len )); then
+            # Truncate from the end. This is done by iterating through the string and
+            # counting visible characters, stopping once we have enough. This correctly
+            # handles embedded ANSI codes.
+            local truncate_to_len=$(( max_len - 1 )) # Leave space for the ellipsis
+            local new_details_string=""
+            local visible_count=0
+            local i=0
+            local in_escape=false
+            while (( i < ${#details_string} && visible_count < truncate_to_len )); do
+                local char="${details_string:i:1}"
+                new_details_string+="$char"
+
+                if [[ "$char" == $'\033' ]]; then
+                    in_escape=true
+                elif ! $in_escape; then
+                    (( visible_count++ ))
+                fi
+
+                if $in_escape && [[ "$char" =~ [a-zA-Z] ]]; then
+                    in_escape=false
+                fi
+                ((i++))
+            done
+            details_string="${new_details_string}…"
+        elif (( len < max_len )); then
+            # Pad with spaces.
+            local padding_needed=$(( max_len - len ))
+            printf -v details_string "%s%*s" "$details_string" "$padding_needed" ""
         fi
+
+        # Combine the padded host alias and the fixed-width details string.
+        local formatted_string; formatted_string=$(printf "%-20s %s" "${host_alias}" "${details_string}")
+
         out_array+=("${formatted_string}${T_RESET}")
     done
 }
@@ -2695,8 +2723,8 @@ interactive_key_management_view() {
 # --- Key Management View Helpers ---
 
 _key_view_draw_header() {
-    local header; header=$(printf " %-25s %-10s %-6s %s" "KEY FILENAME" "TYPE" "BITS" "COMMENT")
-    printMsg "  ${C_WHITE}${header}${T_RESET}"
+    local header; header=$(printf "%-25s %-10s %-6s %-23s" "KEY FILENAME" "TYPE" "BITS" "COMMENT")
+    printMsg "   ${C_WHITE}${header}${T_RESET}"
 }
 
 _key_view_draw_footer() {
@@ -2735,8 +2763,15 @@ _key_view_refresh() {
             local filename; filename=$(basename "$key_path")
             local key_type key_bits key_comment
             read -r key_type key_bits key_comment <<< "$details_str"
+
+            # Truncate filename and comment to fit the fixed-width columns.
+            # The printf %-Ns specifier handles padding, but not truncation.
+            local max_filename_len=25
+            if (( ${#filename} > max_filename_len )); then filename="${filename:0:max_filename_len-1}…"; fi
+            local max_comment_len=23
+            if (( ${#key_comment} > max_comment_len )); then key_comment="${key_comment:0:max_comment_len-1}…"; fi
+
             local formatted_string
-            # formatted_string=$(printf "${C_MAGENTA}%-25s${T_RESET} ${C_YELLOW}%-10s${T_RESET} %-6s %-23s" "${filename}" "${key_type}" "${key_bits}" "${key_comment}")
             formatted_string=$(printf "${C_MAGENTA}%-25s ${C_YELLOW}%-10s ${C_WHITE}%-6s %-23s" "${filename}" "${key_type}" "${key_bits}" "${key_comment}")
             out_menu_options+=("$formatted_string")
         fi
