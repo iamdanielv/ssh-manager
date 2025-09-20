@@ -38,69 +38,6 @@ edit_ssh_host_in_editor() {
     printOkMsg "Host '${host_to_edit}' has been updated from editor."
 }
 
-interactive_reorder_menu() {
-    if ! [[ -t 0 ]]; then printErrMsg "Not an interactive session." >&2; return 1; fi
-    local prompt="$1"; shift; local -a current_items=("$@"); local num_items=${#current_items[@]}
-    if [[ $num_items -eq 0 ]]; then printErrMsg "No items provided to reorder menu." >&2; return 1; fi
-    local current_pos=0; local held_item_idx=-1
-    _draw_reorder_menu() {
-        local output=""; for i in "${!current_items[@]}"; do
-            local pointer=" "; local highlight_start=""; local highlight_end=""
-            if (( i == current_pos )); then pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"; fi
-            if (( i == held_item_idx )); then highlight_start="${T_REVERSE}"; highlight_end="${T_RESET}"; fi
-            output+="  ${pointer} ${highlight_start}${current_items[i]}${T_CLEAR_LINE}${highlight_end}${T_RESET}"$'\n'; done;
-        printf '%s' "$output"; }
-    printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty; trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty' EXIT
-    printf '%s\n' "${T_QST_ICON} ${prompt}" >/dev/tty; printf '%s\n' "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
-    _draw_reorder_menu >/dev/tty
-    printf '%s\n' "${C_GRAY}${DIV}${T_RESET}" >/dev/tty
-    printf '%s(%s↓/↑%s move, %sspace%s grab/drop, %senter%s save, %sq/esc%s cancel)%s\n' "${C_GRAY}" "${C_L_CYAN}" "${C_GRAY}" "${C_L_CYAN}" "${C_GRAY}" "${C_L_GREEN}" "${C_GRAY}" "${C_L_YELLOW}" "${C_GRAY}" "${T_RESET}" >/dev/tty
-
-    move_cursor_up 2
-
-    local key; local lines_above=2; local lines_below=2; while true; do
-        move_cursor_up "$num_items"; key=$(read_single_char </dev/tty)
-        case "$key" in
-            "$KEY_UP"|"k")
-                if (( held_item_idx != -1 )); then
-                    if (( held_item_idx > 0 )); then local next_idx=$((held_item_idx - 1)); local tmp="${current_items[held_item_idx]}"; current_items[held_item_idx]="${current_items[next_idx]}"; current_items[next_idx]="$tmp"; held_item_idx=$next_idx; current_pos=$next_idx; fi
-                else current_pos=$(( (current_pos - 1 + num_items) % num_items )); fi;;
-            "$KEY_DOWN"|"j")
-                if (( held_item_idx != -1 )); then
-                    if (( held_item_idx < num_items - 1 )); then local next_idx=$((held_item_idx + 1)); local tmp="${current_items[held_item_idx]}"; current_items[held_item_idx]="${current_items[next_idx]}"; current_items[next_idx]="$tmp"; held_item_idx=$next_idx; current_pos=$next_idx; fi
-                else current_pos=$(( (current_pos + 1) % num_items )); fi;;
-            ' ') (( held_item_idx == current_pos )) && held_item_idx=-1 || held_item_idx=$current_pos ;;
-            "$KEY_ENTER") clear_lines_down $((num_items + lines_below)); clear_lines_up "$lines_above"; printf "%s\n" "${current_items[@]}"; return 0;;
-            "$KEY_ESC"|"q") clear_lines_down $((num_items + lines_below)); clear_lines_up "$lines_above"; return 1;;
-        esac; _draw_reorder_menu >/dev/tty; done
-}
-
-_reorder_ssh_hosts_worker() {
-    local backup_file="$1"; shift; local -a new_ordered_hosts=("$@")
-    local header_content; header_content=$(awk '/^[ \t]*[Hh][Oo][Ss][Tt][ \t]/ {exit} 1' "$backup_file")
-    local footer_content; footer_content=$(_get_host_block_from_config "*" "$backup_file")
-    local -A host_blocks; mapfile -t original_hosts < <(get_ssh_hosts); for host in "${original_hosts[@]}"; do host_blocks["$host"]=$(_get_host_block_from_config "$host" "$backup_file"); done
-    echo -n "$header_content" > "$SSH_CONFIG_PATH"
-    for host in "${new_ordered_hosts[@]}"; do printf '\n%s' "${host_blocks[$host]}" >> "$SSH_CONFIG_PATH"; done
-    if [[ -n "$footer_content" ]]; then printf '\n%s' "${footer_content}" >> "$SSH_CONFIG_PATH"; fi
-    local temp_file; temp_file=$(mktemp); cat -s "$SSH_CONFIG_PATH" > "$temp_file" && mv "$temp_file" "$SSH_CONFIG_PATH"
-}
-
-reorder_ssh_hosts() {
-    printBanner "Re-order SSH Hosts"; mapfile -t original_hosts < <(get_ssh_hosts)
-    if [[ ${#original_hosts[@]} -lt 2 ]]; then printInfoMsg "Fewer than two hosts found. Nothing to re-order."; return; fi
-    local reordered_output; reordered_output=$(interactive_reorder_menu "Re-order hosts:" "${original_hosts[@]}"); [[ $? -ne 0 ]] && { printInfoMsg "Re-ordering cancelled."; return; }
-    mapfile -t new_ordered_hosts <<< "$reordered_output"
-    if [[ "${new_ordered_hosts[*]}" == "${original_hosts[*]}" ]]; then printInfoMsg "Order is unchanged. No action taken."; return; fi
-    printWarnMsg "This action will rewrite your SSH config file to apply the new order."
-    if ! prompt_yes_no "This may lose comments between hosts. A backup will be created.\n    Continue with re-ordering?" "n"; then printInfoMsg "Re-ordering cancelled."; return; fi
-    local backup_dir="${SSH_DIR}/backups"; mkdir -p "$backup_dir"; local timestamp; timestamp=$(date +"%Y-%m-%d_%H-%M-%S"); local backup_file="${backup_dir}/config_reorder_${timestamp}.bak"
-    cp "$SSH_CONFIG_PATH" "$backup_file"; printInfoMsg "Backup created at: ${C_L_BLUE}${backup_file/#$HOME/\~}${T_RESET}"
-    if run_with_spinner "Applying new host order..." _reorder_ssh_hosts_worker "$backup_file" "${new_ordered_hosts[@]}"; then
-        printOkMsg "SSH config file has been re-ordered successfully."
-    else printErrMsg "Failed to re-order hosts. Your original config is safe."; printInfoMsg "The backup of your config is available at: ${backup_file/#$HOME/\~}"; fi
-}
-
 export_ssh_hosts() {
     printBanner "Export SSH Hosts"; mapfile -t hosts < <(get_ssh_hosts)
     if [[ ${#hosts[@]} -eq 0 ]]; then printInfoMsg "No hosts found to export."; return; fi
@@ -182,7 +119,7 @@ _advanced_menu_view_draw_header() {
 
 _advanced_menu_view_draw_footer() {
     printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC Quit${T_RESET}"
-    printMsg "  ${T_BOLD}Shortcuts:${T_RESET}    ${C_BLUE}(O)pen${T_RESET} | ${C_BLUE}(E)dit${T_RESET} | ${C_MAGENTA}(R)e-order${T_RESET} | ${C_L_GREEN}(B)ackup${T_RESET}"
+    printMsg "  ${T_BOLD}Shortcuts:${T_RESET}    ${C_BLUE}(O)pen${T_RESET} | ${C_BLUE}(E)dit${T_RESET} | ${C_L_GREEN}(B)ackup${T_RESET}"
     printMsg "                ${C_YELLOW}E(x)port${T_RESET} | ${C_YELLOW}(I)mport${T_RESET} | ${C_YELLOW}Q)uit${T_RESET}"
 }
 
@@ -192,7 +129,6 @@ _advanced_menu_view_refresh() {
     local -a items=(
         "${C_L_BLUE}(O)pen${T_RESET} full SSH config in editor"
         "${C_L_BLUE}(E)dit${T_RESET} a specific host's block in editor"
-        "${C_L_MAGENTA}(R)e-order${T_RESET} hosts in config"
         "${C_L_GREEN}(B)ackup${T_RESET} config"
         "${C_L_YELLOW}E(x)port${T_RESET} selected hosts to a new file"
         "${C_L_YELLOW}(I)mport${T_RESET} hosts from a file"
@@ -222,7 +158,6 @@ _advanced_menu_view_refresh() {
     out_data_payloads=(
         "open"
         "edit"
-        "reorder"
         "backup"
         "export"
         "import"
@@ -248,7 +183,6 @@ _perform_advanced_menu_action() {
             fi
             ;;
         "edit") run_menu_action "edit_ssh_host_in_editor" ;;
-        "reorder") run_menu_action "reorder_ssh_hosts" ;;
         "backup") run_menu_action "backup_ssh_config" ;;
         "export") run_menu_action "export_ssh_hosts" ;;
         "import") run_menu_action "import_ssh_hosts" ;;
@@ -276,7 +210,6 @@ _advanced_menu_view_key_handler() {
         "$KEY_ENTER") if [[ -n "$selected_action" ]]; then _perform_advanced_menu_action "$selected_action" out_result; fi ;;
         'o'|'O') _perform_advanced_menu_action "open" out_result ;;
         'e'|'E') _perform_advanced_menu_action "edit" out_result ;;
-        'r'|'R') _perform_advanced_menu_action "reorder" out_result ;;
         'b'|'B') _perform_advanced_menu_action "backup" out_result ;;
         'x'|'X') _perform_advanced_menu_action "export" out_result ;;
         'i'|'I') _perform_advanced_menu_action "import" out_result ;;

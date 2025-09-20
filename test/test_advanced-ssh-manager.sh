@@ -80,7 +80,7 @@ print_test_summary() {
 
     if [[ $# -gt 0 ]]; then
         unset -f -- "$@" &>/dev/null
-        unset MOCK_PROMPT_INPUTS MOCK_SELECT_HOST_RETURN MOCK_PROMPT_RESULT MOCK_DATE_RETURN MOCK_REORDER_MENU_OUTPUT MOCK_MULTI_SELECT_MENU_OUTPUT
+        unset MOCK_PROMPT_INPUTS MOCK_SELECT_HOST_RETURN MOCK_PROMPT_RESULT MOCK_DATE_RETURN MOCK_MULTI_SELECT_MENU_OUTPUT
     fi
 
     if [[ $failures -eq 0 ]]; then exit 0; else exit 1; fi
@@ -145,12 +145,6 @@ prompt_yes_no() {
 
 prompt_to_continue() {
     return 0
-}
-
-MOCK_REORDER_MENU_OUTPUT=""
-interactive_reorder_menu() {
-    echo -e "$MOCK_REORDER_MENU_OUTPUT"
-    if [[ -n "$MOCK_REORDER_MENU_OUTPUT" ]]; then return 0; else return 1; fi
 }
 
 MOCK_MULTI_SELECT_MENU_OUTPUT=""
@@ -250,45 +244,6 @@ test_backup_ssh_config() {
     _run_string_test "${MOCK_CP_CALLS[0]}" "$expected_cp_call" "Should call cp to create a timestamped backup"
 }
 
-test_reorder_ssh_hosts() {
-    printTestSectionHeader "Testing reorder_ssh_hosts"
-    reset_test_state
-    > "$MOCK_CP_CALL_LOG_FILE"
-    MOCK_PROMPT_RESULT=0
-
-    MOCK_REORDER_MENU_OUTPUT="test-server-3
-test-server-1
-test-server-2"
-
-    reorder_ssh_hosts >/dev/null 2>&1
-
-    local -a MOCK_CP_CALLS
-    mapfile -t MOCK_CP_CALLS < "$MOCK_CP_CALL_LOG_FILE"
-    _run_string_test "${#MOCK_CP_CALLS[@]}" "1" "Should create a backup before reordering"
-
-    local expected_config
-    expected_config=$(cat <<'EOF'
-Host test-server-3
-    HostName 192.168.1.103
-    User user3
-    IdentityFile /absolute/path/to/key
-
-Host test-server-1
-    HostName 192.168.1.101
-    User user1
-    Port 2222
-    IdentityFile ~/.ssh/id_test1
-
-Host test-server-2
-    HostName server2.example.com
-    User user2
-EOF
-)
-    local actual_config
-    actual_config=$(<"$SSH_CONFIG_PATH")
-    _run_string_test "$(echo "$actual_config" | cat -s)" "$(echo "$expected_config" | cat -s)" "Should rewrite the config file with the new host order"
-}
-
 test_export_ssh_hosts() {
     printTestSectionHeader "Testing export_ssh_hosts"
     reset_test_state
@@ -377,11 +332,10 @@ main() {
 
     test_edit_host_in_editor
     test_backup_ssh_config
-    test_reorder_ssh_hosts
     test_export_ssh_hosts
     test_import_ssh_hosts
 
-    print_test_summary "ssh" "cp" "date" "prompt_yes_no" "prompt_for_input" "select_ssh_host" "prompt_to_continue" "interactive_reorder_menu" "interactive_multi_select_menu"
+    print_test_summary "ssh" "cp" "date" "prompt_yes_no" "prompt_for_input" "select_ssh_host" "prompt_to_continue" "interactive_multi_select_menu"
 }
 
 main

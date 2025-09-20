@@ -42,7 +42,6 @@ The main script provides a TUI for all your common, day-to-day SSH tasks.
 This script provides a focused TUI for more complex or potentially destructive operations.
 
 - **Advanced Editing**: Open a specific host's entire configuration block in your `$EDITOR`.
-- **Re-order**: Interactively change the order of host blocks in your config file.
 - **Backup**: Create a timestamped backup of your config file.
 - **Import/Export**: Export selected host configurations to a new file or import them from a file into your main config.
 
