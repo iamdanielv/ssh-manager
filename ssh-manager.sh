@@ -796,9 +796,16 @@ get_detailed_ssh_hosts_menu_options() {
 
         # Use a simple printf to combine the padded host alias and the details string.
         # This is more robust than having color codes inside the printf format string.
-        local formatted_string; formatted_string=$(printf "%-20b %b${T_RESET}" "${host_alias}" "${details_string}"
-        )
-        out_array+=("$formatted_string")
+        local formatted_string; formatted_string=$(printf "%-20s %b" "${host_alias}" "${details_string}")
+
+        # Now, pad the entire string to a minimum width, accounting for ANSI codes.
+        local stripped_string; stripped_string=$(strip_ansi_codes "$formatted_string")
+        local padding_needed=$(( 67 - ${#stripped_string} ))
+        if (( padding_needed > 0 )); then
+            # Use printf -v to append spaces to the variable without forking a subshell.
+            printf -v formatted_string "%s%*s" "$formatted_string" "$padding_needed" ""
+        fi
+        out_array+=("${formatted_string}${T_RESET}")
     done
 }
 
@@ -1021,6 +1028,19 @@ regenerate_public_key() {
         printOkMsg "Public key successfully generated at: ${C_L_BLUE}${public_key_path/#$HOME/\~}${T_RESET}"
     else
         printErrMsg "Failed to re-generate public key."
+    fi
+}
+
+# Opens the main SSH config file in the default editor.
+open_ssh_config_in_editor() {
+    printBanner "Open SSH Config in Editor"
+    local editor="${EDITOR:-nvim}"
+    if ! command -v "${editor}" &>/dev/null; then
+        printErrMsg "Editor '${editor}' not found. Please set the EDITOR environment variable."
+    else
+        printInfoMsg "Opening ${SSH_CONFIG_PATH} in '${editor}'..."
+        # run_menu_action (the caller) handles showing/hiding cursor
+        "${editor}" "${SSH_CONFIG_PATH}"
     fi
 }
 
@@ -2460,88 +2480,23 @@ run_menu_action() {
     prompt_to_continue
 }
 
-# (Private) Generic function to display and handle a submenu loop.
-# It takes a banner title, an array of ordered options, and a map of options to actions.
-# Usage: _run_submenu <banner_title> "Option 1" "action1" "Option 2" "action2" ...
-_run_submenu() {
-    local banner_title="$1"
-    shift
-    local -a menu_definition=("$@")
+# --- Host-Centric Main View Helpers ---
 
-    local -a ordered_options
-    local -A actions_map
-
-    for ((i=0; i<${#menu_definition[@]}; i+=2)); do
-        ordered_options+=("${menu_definition[i]}")
-        actions_map["${menu_definition[i]}"]="${menu_definition[i+1]}"
-    done
-
-    # Add the 'Back' option to the list for display
-    local -a menu_options=("${ordered_options[@]}" "Back to main menu")
-
-    while true; do
-        clear
-        printBanner "$banner_title"
-
-        local selected_index
-        selected_index=$(interactive_single_select_menu "Select an action:" "" "${menu_options[@]}")
-        [[ $? -ne 0 ]] && break # ESC/q from menu returns to the previous menu
-
-        local selected_option="${menu_options[$selected_index]}"
-
-        if [[ "$selected_option" == "Back to main menu" ]]; then
-            break
-        fi
-
-        # Get the action from the map.
-        local action="${actions_map[$selected_option]}"
-
-        # Handle special actions identified by a "SPECIAL_" prefix.
-        if [[ "$action" == "SPECIAL_CONNECT" ]]; then
-            clear
-            printBanner "Connect to a server"
-            local selected_host
-            selected_host=$(select_ssh_host "Select a host to connect to:")
-            if [[ $? -eq 0 ]]; then
-                # Replace the script process with the ssh client.
-                exec ssh "$selected_host"
-            fi
-            # If connection is cancelled, the loop continues.
-        elif [[ "$action" == "SPECIAL_EDIT_CONFIG" ]]; then
-            local editor="${EDITOR:-nvim}"
-            if ! command -v "${editor}" &>/dev/null; then
-                printErrMsg "Editor '${editor}' not found. Please set the EDITOR environment variable."
-                prompt_to_continue
-            else
-                "${editor}" "${SSH_CONFIG_PATH}"
-            fi
-        else
-            # This is the standard case: a function name to be passed to run_menu_action.
-            if [[ -n "$action" ]]; then
-                run_menu_action "$action"
-            else
-                printErrMsg "Internal error: No action defined for '${selected_option}'."
-                prompt_to_continue
-            fi
-        fi
-    done
-}
-
-# --- Server Management View Helpers ---
-
-_server_view_draw_header() {
+_host_centric_view_draw_header() {
     local header; header=$(printf "   %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "user@hostname[:port] (key)")
     printMsg "${C_WHITE}${header}${T_RESET}"
 }
 
-_server_view_draw_footer() {
-    printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC${T_RESET} Back"
+_host_centric_view_draw_footer() {
+    printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET}"
+    printMsg "  ${T_BOLD}Manage:${T_RESET}       SSH ${C_MAGENTA}(K)eys${T_RESET} | ${C_L_CYAN}(P)ort${T_RESET} Forwards"
+    printMsg "                ${C_L_BLUE}(O)pen${T_RESET} ssh file"
     printMsg "  ${T_BOLD}Host Actions:${T_RESET} ${C_L_GREEN}(A)dd${T_RESET} | ${C_L_RED}(D)elete${T_RESET} | ${C_L_BLUE}(C)lone${T_RESET}"
     printMsg "  ${T_BOLD}Host Edit:${T_RESET}    ${C_L_CYAN}(E)dit${T_RESET} host details"
     printMsg "  ${T_BOLD}Connection:${T_RESET}   ${C_L_YELLOW}ENTER${T_RESET} Connect | (${C_L_CYAN}t${T_RESET})est selected | (${C_L_CYAN}T${T_RESET})est all"
 }
 
-_server_view_refresh() {
+_host_centric_view_refresh() {
     local -n out_menu_options="$1"
     local -n out_data_payloads="$2"
     # Get raw host names for the data payload
@@ -2550,7 +2505,7 @@ _server_view_refresh() {
     get_detailed_ssh_hosts_menu_options out_menu_options "true"
 }
 
-_server_view_key_handler() {
+_host_centric_view_key_handler() {
     local key="$1"
     local selected_host="$2"
     # local selected_index="$3" # Unused before move
@@ -2571,9 +2526,8 @@ _server_view_key_handler() {
                 # The cursor is at the end of the list content.
                 # Move down one line to be past the top divider.
                 printf '\n' >/dev/tty
-
-                # The area to clear is the 4 lines of footer text + 1 bottom divider line.
-                local lines_to_clear=5
+                # The area to clear is the 6 lines of footer text + 1 bottom divider line.
+                local lines_to_clear=7
                 clear_lines_down "$lines_to_clear" >/dev/tty
 
                 # The cursor is now at the start of where the footer text was.
@@ -2590,8 +2544,8 @@ _server_view_key_handler() {
         'a'|'A')
             # Move cursor down past the list and its top divider.
             printf '\n' >/dev/tty
-            # The area to clear is the 4 lines of footer text + 1 bottom divider line.
-            local lines_to_clear=5
+            # The area to clear is the 6 lines of footer text + 1 bottom divider line.
+            local lines_to_clear=7
             clear_lines_down "$lines_to_clear" >/dev/tty
 
             # Show the prompt in the cleared footer area.
@@ -2614,8 +2568,8 @@ _server_view_key_handler() {
             if [[ -n "$selected_host" ]]; then
                 # Move cursor down past the list and its top divider.
                 printf '\n' >/dev/tty
-                # The area to clear is the 4 lines of footer text + 1 bottom divider line.
-                local lines_to_clear=5
+                # The area to clear is the 6 lines of footer text + 1 bottom divider line.
+                local lines_to_clear=7
                 clear_lines_down "$lines_to_clear" >/dev/tty
 
                 # Show the prompt in the cleared footer area.
@@ -2654,19 +2608,42 @@ _server_view_key_handler() {
             run_menu_action "test_all_ssh_connections"
             out_result="refresh" # Trigger a full redraw to restore the view.
             ;;
-        "$KEY_ESC"|"q"|"Q") out_result="exit" ;; # Exit view
+        'K')
+            # This is a view change, not a simple action.
+            # We don't use run_menu_action because it clears and prompts.
+            # The sub-view will handle clearing the screen.
+            interactive_key_management_view
+            out_result="refresh" # Redraw main view when returning
+            ;;
+        'p'|'P')
+            interactive_port_forward_view
+            out_result="refresh"
+            ;;
+        'o'|'O')
+            run_menu_action "open_ssh_config_in_editor"
+            out_result="refresh"
+            ;;
+        "$KEY_ESC"|"q"|"Q") out_result="exit" ;; # Exit script
     esac
 }
 
-interactive_server_management_view() {
+interactive_host_centric_view() {
     _interactive_list_view \
-        "${C_L_CYAN}Server/Host${C_BLUE} Management" \
-        "_server_view_draw_header" \
-        "_server_view_refresh" \
-        "_server_view_key_handler" \
-        "_server_view_draw_footer"
+        "SSH Manager" \
+        "_host_centric_view_draw_header" \
+        "_host_centric_view_refresh" \
+        "_host_centric_view_key_handler" \
+        "_host_centric_view_draw_footer"
 }
 
+interactive_key_management_view() {
+    _interactive_list_view \
+        "${C_MAGENTA}Key${C_BLUE} Management" \
+        "_key_view_draw_header" \
+        "_key_view_refresh" \
+        "_key_view_key_handler" \
+        "_key_view_draw_footer"
+}
 # --- Key Management View Helpers ---
 
 _key_view_draw_header() {
@@ -2870,131 +2847,9 @@ _setup_environment() {
     touch "$PORT_FORWARDS_CONFIG_PATH"; chmod 600 "$PORT_FORWARDS_CONFIG_PATH"
 }
 
-# --- Main Menu View Helpers ---
-
-_main_menu_view_draw_header() {
-    printMsg "${T_QST_ICON} What would you like to do?"
-}
-
-_main_menu_view_draw_footer() {
-    printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC${T_RESET} Quit"
-    printMsg "  ${T_BOLD}Shortcuts:${T_RESET}    ${C_L_CYAN}(S)ervers${T_RESET} | ${C_MAGENTA}(K)eys${T_RESET} | ${C_L_CYAN}(P)ort${T_RESET} Forwards"
-    printMsg "                ${C_L_BLUE}(E)dit${T_RESET} ssh file | ${C_YELLOW}(Q)uit${T_RESET}"
-}
-
-_main_menu_view_refresh() {
-    local -n out_menu_options="$1"
-    local -n out_data_payloads="$2"
-
-    local -a items=(
-        "${C_L_CYAN}(S)erver${T_RESET} Management"
-        "${C_L_MAGENTA}(K)ey${T_RESET} Management"
-        "${C_L_CYAN}(P)ort${T_RESET} Forwarding"
-        "${C_L_BLUE}(E)dit${T_RESET} SSH config in editor"
-        "${C_YELLOW}(Q)uit${T_RESET}"
-    )
-
-    # Find the maximum visible length and store stripped items
-    local max_len=0
-    local -a stripped_items=()
-    for item in "${items[@]}"; do
-        # Strip ANSI escape codes to calculate the real display length
-        local stripped_item; stripped_item=$(strip_ansi_codes "$item")
-        stripped_items+=("$stripped_item")
-        if (( ${#stripped_item} > max_len )); then
-            max_len=$(( ${#stripped_item} + 1 ))
-        fi
-    done
-
-    # Build the final menu options array, padding each item to the max length
-    out_menu_options=()
-    for i in "${!items[@]}"; do
-        local padding_len=$(( max_len - ${#stripped_items[i]} ))
-        local padded_item
-        printf -v padded_item "%s%*s" "${items[i]}" "$padding_len" ""
-        out_menu_options+=("$padded_item")
-    done
-
-    # The data payloads are the actions themselves.
-    out_data_payloads=(
-        "server"
-        "key"
-        "port"
-        "edit"
-        "exit"
-    )
-}
-
-_perform_main_menu_action() {
-    local action="$1"
-    local -n out_result_ref="$2"
-
-    case "$action" in
-        "server") interactive_server_management_view ;;
-        "key") interactive_key_management_view ;;
-        "port") interactive_port_forward_view ;;
-        "edit")
-            clear
-            local editor="${EDITOR:-nvim}"
-            if ! command -v "${editor}" &>/dev/null; then
-                printBanner "Error"
-                printErrMsg "Editor '${editor}' not found. Please set the EDITOR environment variable."
-                prompt_to_continue
-            else
-                printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty
-                "${editor}" "${SSH_CONFIG_PATH}"
-                printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty
-            fi
-            ;;
-        "exit") out_result_ref="exit" ;;
-    esac
-
-    if [[ "$out_result_ref" != "exit" ]]; then
-        out_result_ref="refresh"
-    fi
-}
-
-_main_menu_view_key_handler() {
-    local key="$1"
-    local selected_action="$2"
-    # local selected_index="$3" # Unused
-    local -n current_option_ref="$4"
-    local num_options="$5"
-    local -n out_result="$6"
-
-    out_result="noop" # Default to redraw
-
-    case "$key" in
-        "$KEY_UP"|"k")
-            if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref - 1 + num_options) % num_options )); fi
-            ;;
-        "$KEY_DOWN"|"j")
-            if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref + 1) % num_options )); fi
-            ;;
-        "$KEY_ENTER")
-            if [[ -n "$selected_action" ]]; then _perform_main_menu_action "$selected_action" out_result; fi
-            ;;
-        's'|'S') _perform_main_menu_action "server" out_result ;;
-        'K') _perform_main_menu_action "key" out_result ;;
-        'p'|'P') _perform_main_menu_action "port" out_result ;;
-        'e'|'E') _perform_main_menu_action "edit" out_result ;;
-        'x'|'X') _perform_main_menu_action "exit" out_result ;;
-        "$KEY_ESC"|"q"|"Q") out_result="exit" ;;
-    esac
-}
-
-interactive_main_menu_view() {
-    _interactive_list_view \
-        "SSH Manager" \
-        "_main_menu_view_draw_header" \
-        "_main_menu_view_refresh" \
-        "_main_menu_view_key_handler" \
-        "_main_menu_view_draw_footer"
-}
-
 # Main application loop.
 main_loop() {
-    interactive_main_menu_view
+    interactive_host_centric_view
     clear
     printOkMsg "Goodbye!"
 }
