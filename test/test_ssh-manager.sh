@@ -31,7 +31,8 @@ initialize_test_suite() {
 }
 
 printTestSectionHeader() {
-  printMsg "\n${T_ULINE}${C_L_WHITE}    ${1}${T_RESET}"
+  # Use printf with %b to interpret the leading \n as a newline.
+  printf '%b\n' "\n${T_ULINE}${C_L_WHITE}    ${1}${T_RESET}"
 }
 
 # (Private) Helper to print a passing test message.
