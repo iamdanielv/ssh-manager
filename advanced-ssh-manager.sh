@@ -150,7 +150,12 @@ import_ssh_hosts() {
 }
 
 backup_ssh_config() {
-    printBanner "Backup SSH Config"; local backup_dir="${SSH_DIR}/backups"; mkdir -p "$backup_dir"
+    printBanner "Backup SSH Config"
+    if ! prompt_yes_no "Create a timestamped backup of your SSH config file?" "y"; then
+        printInfoMsg "Backup cancelled."
+        return
+    fi
+    local backup_dir="${SSH_DIR}/backups"; mkdir -p "$backup_dir"
     local timestamp; timestamp=$(date +"%Y-%m-%d_%H-%M-%S"); local backup_file="${backup_dir}/config_${timestamp}.bak"
     if run_with_spinner "Creating backup of ${SSH_CONFIG_PATH}..." cp "$SSH_CONFIG_PATH" "$backup_file"; then
         printInfoMsg "Backup saved to: ${C_L_BLUE}${backup_file/#$HOME/\~}${T_RESET}"
