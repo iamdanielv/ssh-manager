@@ -109,6 +109,49 @@ strip_ansi_codes() {
     done
     echo -n "$s"
 }
+
+# (Private) Formats a string to a fixed visual width by padding or truncating.
+# Correctly handles strings containing ANSI color codes.
+# Usage: formatted_string=$(_format_fixed_width_string "input string" 20)
+_format_fixed_width_string() {
+    local input_str="$1"
+    local max_len="$2"
+    local trunc_char="${3:-…}"
+    local trunc_char_len=${#trunc_char}
+
+    local stripped_str; stripped_str=$(strip_ansi_codes "$input_str")
+    local len=${#stripped_str}
+
+    if (( len > max_len )); then
+        # Truncate
+        local truncate_to_len=$(( max_len - trunc_char_len ))
+        local new_str=""
+        local visible_count=0
+        local i=0
+        local in_escape=false
+        # This loop is complex because it needs to preserve color codes while counting visible characters.
+        while (( i < ${#input_str} && visible_count < truncate_to_len )); do
+            local char="${input_str:i:1}"
+            new_str+="$char"
+
+            if [[ "$char" == $'\033' ]]; then
+                in_escape=true
+            elif ! $in_escape; then
+                (( visible_count++ ))
+            fi
+
+            if $in_escape && [[ "$char" =~ [a-zA-Z] ]]; then
+                in_escape=false
+            fi
+            ((i++))
+        done
+        echo -n "${new_str}${trunc_char}"
+    else
+        # Pad
+        local padding_needed=$(( max_len - len ))
+        printf "%s%*s" "$input_str" "$padding_needed" ""
+    fi
+}
 #endregion Logging & Banners
 
 #region Terminal Control
@@ -766,6 +809,7 @@ get_detailed_ssh_hosts_menu_options() {
     fi
 
     for host_alias in "${hosts[@]}"; do
+        local display_alias; display_alias=$(_format_fixed_width_string "$host_alias" 20)
         # Declare local variables and use eval to populate them from the awk output.
         # This is safe because the input is controlled (from ssh -G) and the awk script
         # only processes specific, known keys.
@@ -794,45 +838,10 @@ get_detailed_ssh_hosts_menu_options() {
         # Build the details part of the string with all its colors.
         local details_string="${C_L_CYAN}${current_user:-?}@${current_hostname:-?}${port_info}${key_info}"
 
-        # Pad or truncate the details_string to a visual width of 46 characters.
-        local stripped_details; stripped_details=$(strip_ansi_codes "$details_string")
-        local len=${#stripped_details}
-        local max_len=46
-
-        if (( len > max_len )); then
-            # Truncate from the end. This is done by iterating through the string and
-            # counting visible characters, stopping once we have enough. This correctly
-            # handles embedded ANSI codes.
-            local truncate_to_len=$(( max_len - 1 )) # Leave space for the ellipsis
-            local new_details_string=""
-            local visible_count=0
-            local i=0
-            local in_escape=false
-            while (( i < ${#details_string} && visible_count < truncate_to_len )); do
-                local char="${details_string:i:1}"
-                new_details_string+="$char"
-
-                if [[ "$char" == $'\033' ]]; then
-                    in_escape=true
-                elif ! $in_escape; then
-                    (( visible_count++ ))
-                fi
-
-                if $in_escape && [[ "$char" =~ [a-zA-Z] ]]; then
-                    in_escape=false
-                fi
-                ((i++))
-            done
-            details_string="${new_details_string}…"
-        elif (( len < max_len )); then
-            # Pad with spaces.
-            local padding_needed=$(( max_len - len ))
-            printf -v details_string "%s%*s" "$details_string" "$padding_needed" ""
-        fi
+        details_string=$(_format_fixed_width_string "$details_string" 46)
 
         # Combine the padded host alias and the fixed-width details string.
-        local formatted_string; formatted_string=$(printf "%-20s %s" "${host_alias}" "${details_string}")
-
+        local formatted_string; formatted_string=$(printf "%s %s" "${display_alias}" "${details_string}")
         out_array+=("${formatted_string}${T_RESET}")
     done
 }
@@ -2358,12 +2367,15 @@ _format_saved_port_forward_line() {
     local status="$1" pid="$2" type="$3" spec="$4" host="$5" desc="$6"; local type_color=""
     if [[ "$type" == "Local" ]]; then type_color="$C_L_BLUE"; elif [[ "$type" == "Remote" ]]; then type_color="$C_L_YELLOW"; fi
     local status_icon; if [[ "$status" == "active" ]]; then status_icon="${C_L_GREEN}[✓]"; else status_icon="${C_GRAY}[-]"; fi
+    
+    host=$(_format_fixed_width_string "$host" 20)
+    spec=$(_format_fixed_width_string "$spec" 45)
+    desc=$(_format_fixed_width_string "$desc" 45)
 
-    local line1; line1=$(printf "${C_L_CYAN}%-20s${C_L_WHITE} %-45s" "$host" "$spec")
+    local line1; line1=$(printf "${C_L_CYAN}%s${C_L_WHITE} %s" "$host" "$spec")
 
     # The second line is indented to appear nested under the first.
-    local line2; line2=$(printf "   %-3s %-8s${type_color} %-7s${C_L_WHITE} %-45s" \
-        "$status_icon" "${pid:-off}" "$type" "$desc")
+    local line2; line2=$(printf "   %-3s %-8s${type_color} %-7s${C_L_WHITE} %s" "$status_icon" "${pid:-off}" "$type" "$desc")
 
     printf "%s\n%s${T_RESET}" "$line1" "$line2"
 }
@@ -2764,15 +2776,11 @@ _key_view_refresh() {
             local key_type key_bits key_comment
             read -r key_type key_bits key_comment <<< "$details_str"
 
-            # Truncate filename and comment to fit the fixed-width columns.
-            # The printf %-Ns specifier handles padding, but not truncation.
-            local max_filename_len=25
-            if (( ${#filename} > max_filename_len )); then filename="${filename:0:max_filename_len-1}…"; fi
-            local max_comment_len=23
-            if (( ${#key_comment} > max_comment_len )); then key_comment="${key_comment:0:max_comment_len-1}…"; fi
+            filename=$(_format_fixed_width_string "$filename" 25)
+            key_comment=$(_format_fixed_width_string "$key_comment" 23)
 
             local formatted_string
-            formatted_string=$(printf "${C_MAGENTA}%-25s ${C_YELLOW}%-10s ${C_WHITE}%-6s %-23s" "${filename}" "${key_type}" "${key_bits}" "${key_comment}")
+            formatted_string=$(printf "${C_MAGENTA}%s ${C_YELLOW}%-10s ${C_WHITE}%-6s %s" "${filename}" "${key_type}" "${key_bits}" "${key_comment}")
             out_menu_options+=("$formatted_string")
         fi
     done < <(find "$SSH_DIR" -maxdepth 1 -type f ! -name "*.pub")
