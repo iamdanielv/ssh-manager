@@ -161,35 +161,108 @@ _setup_environment() {
     prereq_checks "$@"; mkdir -p "$SSH_DIR"; chmod 700 "$SSH_DIR"; touch "$SSH_CONFIG_PATH"; chmod 600 "$SSH_CONFIG_PATH"
 }
 
-main_loop() {
-    clear
-    printBanner "Advanced SSH Manager Tools"
-    local -a menu_options=(
-        "Open full SSH config in default editor"
-        "Edit a specific host's block in editor"
-        "Interactively re-order hosts in config"
-        "Create a timestamped backup of config"
-        "Export selected hosts to a new file"
-        "Import hosts from a file"
-        "Exit"
+# --- Main Menu View Helpers ---
+
+_advanced_menu_view_draw_header() {
+    printMsg "${T_QST_ICON} What would you like to do?"
+}
+
+_advanced_menu_view_draw_footer() {
+    printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC Quit${T_RESET}"
+    printMsg "  ${T_BOLD}Shortcuts:${T_RESET}    ${C_BLUE}(O)pen${T_RESET} | ${C_BLUE}(E)dit${T_RESET} | ${C_MAGENTA}(R)e-order${T_RESET} | ${C_L_GREEN}(B)ackup${T_RESET}"
+    printMsg "                ${C_YELLOW}E(x)port${T_RESET} | ${C_YELLOW}(I)mport${T_RESET} | ${C_YELLOW}Q)uit${T_RESET}"
+}
+
+_advanced_menu_view_refresh() {
+    local -n out_menu_options="$1"
+    local -n out_data_payloads="$2"
+    out_menu_options=(
+        "${C_L_BLUE}(O)pen${T_RESET} full SSH config in editor"
+        "${C_L_BLUE}(E)dit${T_RESET} a specific host's block in editor"
+        "${C_L_MAGENTA}(R)e-order${T_RESET} hosts in config"
+        "${C_L_GREEN}(B)ackup${T_RESET} config"
+        "${C_L_YELLOW}E(x)port${T_RESET} selected hosts to a new file"
+        "${C_L_YELLOW}(I)mport${T_RESET} hosts from a file"
+        "${C_L_YELLOW}(Q)uit${T_RESET}"
     )
-    local selected_index; selected_index=$(interactive_single_select_menu "What would you like to do?" "" "${menu_options[@]}")
-    [[ $? -ne 0 ]] && { clear; printOkMsg "Goodbye!"; exit 0; }
-    case "${menu_options[$selected_index]}" in
-        "Open full SSH config in default editor")
+    out_data_payloads=(
+        "open"
+        "edit"
+        "reorder"
+        "backup"
+        "export"
+        "import"
+        "quit"
+    )
+}
+
+_perform_advanced_menu_action() {
+    local action="$1"
+    local -n out_result_ref="$2"
+
+    case "$action" in
+        "open")
             clear; printBanner "Open SSH Config in Editor"
             local editor="${EDITOR:-nvim}"
             if ! command -v "${editor}" &>/dev/null; then
                 printErrMsg "Editor '${editor}' not found. Please set the EDITOR environment variable."; prompt_to_continue
-            else printInfoMsg "Opening ${SSH_CONFIG_PATH} in '${editor}'..."; "${editor}" "${SSH_CONFIG_PATH}"; fi
+            else
+                printInfoMsg "Opening ${SSH_CONFIG_PATH} in '${editor}'..."
+                printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty
+                "${editor}" "${SSH_CONFIG_PATH}"
+                printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty
+            fi
             ;;
-        "Edit a specific host's block in editor") run_menu_action "edit_ssh_host_in_editor" ;;
-        "Interactively re-order hosts in config") run_menu_action "reorder_ssh_hosts" ;;
-        "Create a timestamped backup of config") run_menu_action "backup_ssh_config" ;;
-        "Export selected hosts to a new file") run_menu_action "export_ssh_hosts" ;;
-        "Import hosts from a file") run_menu_action "import_ssh_hosts" ;;
-        "Exit") clear; printOkMsg "Goodbye!"; exit 0 ;;
+        "edit") run_menu_action "edit_ssh_host_in_editor" ;;
+        "reorder") run_menu_action "reorder_ssh_hosts" ;;
+        "backup") run_menu_action "backup_ssh_config" ;;
+        "export") run_menu_action "export_ssh_hosts" ;;
+        "import") run_menu_action "import_ssh_hosts" ;;
+        "quit") out_result_ref="exit" ;;
     esac
+
+    if [[ "$out_result_ref" != "exit" ]]; then
+        out_result_ref="refresh"
+    fi
+}
+
+_advanced_menu_view_key_handler() {
+    local key="$1"
+    local selected_action="$2"
+    # local selected_index="$3" # Unused
+    local -n current_option_ref="$4"
+    local num_options="$5"
+    local -n out_result="$6"
+
+    out_result="noop" # Default to redraw
+
+    case "$key" in
+        "$KEY_UP"|"k") if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref - 1 + num_options) % num_options )); fi ;;
+        "$KEY_DOWN"|"j") if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref + 1) % num_options )); fi ;;
+        "$KEY_ENTER") if [[ -n "$selected_action" ]]; then _perform_advanced_menu_action "$selected_action" out_result; fi ;;
+        'o'|'O') _perform_advanced_menu_action "open" out_result ;;
+        'e'|'E') _perform_advanced_menu_action "edit" out_result ;;
+        'r'|'R') _perform_advanced_menu_action "reorder" out_result ;;
+        'b'|'B') _perform_advanced_menu_action "backup" out_result ;;
+        'x'|'X') _perform_advanced_menu_action "export" out_result ;;
+        'i'|'I') _perform_advanced_menu_action "import" out_result ;;
+        'q'|'Q'|"$KEY_ESC") _perform_advanced_menu_action "quit" out_result ;;
+    esac
+}
+
+interactive_advanced_menu_view() {
+    _interactive_list_view \
+        "Advanced SSH Manager Tools" \
+        "_advanced_menu_view_draw_header" \
+        "_advanced_menu_view_refresh" \
+        "_advanced_menu_view_key_handler" \
+        "_advanced_menu_view_draw_footer"
+}
+
+main_loop() {
+    interactive_advanced_menu_view
+    clear
+    printOkMsg "Goodbye!"
 }
 
 main() {
@@ -200,7 +273,7 @@ main() {
         esac
     fi
     _setup_environment "ssh" "awk" "cat" "grep" "rm" "mktemp" "cp" "date"
-    while true; do main_loop; done
+    main_loop
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
