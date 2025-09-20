@@ -176,7 +176,7 @@ _advanced_menu_view_draw_footer() {
 _advanced_menu_view_refresh() {
     local -n out_menu_options="$1"
     local -n out_data_payloads="$2"
-    out_menu_options=(
+    local -a items=(
         "${C_L_BLUE}(O)pen${T_RESET} full SSH config in editor"
         "${C_L_BLUE}(E)dit${T_RESET} a specific host's block in editor"
         "${C_L_MAGENTA}(R)e-order${T_RESET} hosts in config"
@@ -185,6 +185,27 @@ _advanced_menu_view_refresh() {
         "${C_L_YELLOW}(I)mport${T_RESET} hosts from a file"
         "${C_L_YELLOW}(Q)uit${T_RESET}"
     )
+
+    # Find the maximum visible length and store stripped items
+    local max_len=0
+    local -a stripped_items=()
+    for item in "${items[@]}"; do
+        local stripped_item; stripped_item=$(strip_ansi_codes "$item")
+        stripped_items+=("$stripped_item")
+        if (( ${#stripped_item} > max_len )); then
+            max_len=$(( ${#stripped_item} + 1 ))
+        fi
+    done
+
+    # Build the final menu options array, padding each item to the max length
+    out_menu_options=()
+    for i in "${!items[@]}"; do
+        local padding_len=$(( max_len - ${#stripped_items[i]} ))
+        local padded_item
+        printf -v padded_item "%s%*s" "${items[i]}" "$padding_len" ""
+        out_menu_options+=("$padded_item")
+    done
+
     out_data_payloads=(
         "open"
         "edit"
@@ -272,7 +293,7 @@ main() {
             *) print_usage; echo; printErrMsg "Unknown option: $1"; exit 1 ;;
         esac
     fi
-    _setup_environment "ssh" "awk" "cat" "grep" "rm" "mktemp" "cp" "date"
+    _setup_environment "ssh" "awk" "cat" "grep" "rm" "mktemp" "cp" "date" "sed"
     main_loop
 }
 
