@@ -329,11 +329,11 @@ _prompt_for_valid_port() {
 }
 
 # --- Interactive Menus ---
-# (Private) Generic interactive menu function.
-# This is the new core implementation for both single and multi-select menus.
+# Generic interactive menu function.
+# This is the core implementation for both single and multi-select menus.
 #
 # Usage:
-#   _interactive_menu <mode> <prompt> <header> <options_array>
+#   interactive_menu <mode> <prompt> <header> <options_array>
 #
 #   mode: "single" or "multi"
 #
@@ -341,7 +341,7 @@ _prompt_for_valid_port() {
 #   - For "single" mode: The index of the selected option on stdout.
 #   - For "multi" mode: The indices of selected options on stdout, one per line.
 #   - Exit code 0 on success, 1 on cancellation or no selection.
-_interactive_menu() {
+interactive_menu() {
     local mode="$1"; local prompt="$2"; local header="$3"; shift 3; local -a options=("$@")
 
     if ! [[ -t 0 ]]; then printErrMsg "Not an interactive session." >&2; return 1; fi
@@ -452,12 +452,7 @@ _interactive_menu() {
 
 interactive_multi_select_menu() {
     local prompt="$1"; local header="$2"; shift 2
-    _interactive_menu "multi" "$prompt" "$header" "$@"
-}
-
-interactive_single_select_menu() {
-    local prompt="$1"; local header="$2"; shift 2
-    _interactive_menu "single" "$prompt" "$header" "$@"
+    interactive_menu "multi" "$prompt" "$header" "$@"
 }
 
 # (Private) A generic, reusable interactive list view.
@@ -926,9 +921,8 @@ select_ssh_host() {
     get_detailed_ssh_hosts_menu_options menu_options "$show_key_info"
 
     local selected_index
-    local header
-    header=$(printf "  %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "user@hostname[:port]")
-    selected_index=$(interactive_single_select_menu "$prompt" "$header" "${menu_options[@]}")
+    local header; header=$(printf "  %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "user@hostname[:port]")
+    selected_index=$(interactive_menu "single" "$prompt" "$header" "${menu_options[@]}")
     if [[ $? -ne 0 ]]; then
         printInfoMsg "Operation cancelled."
         return 1
@@ -1010,7 +1004,7 @@ generate_ssh_key() {
 
     local -a key_types=("ed25519 (recommended)" "rsa (legacy, 4096 bits)")
     local selected_index
-    selected_index=$(interactive_single_select_menu "Select the type of key to generate:" "" "${key_types[@]}")
+    selected_index=$(interactive_menu "single" "Select the type of key to generate:" "" "${key_types[@]}")
     [[ $? -ne 0 ]] && { printInfoMsg "Operation cancelled."; return; }
 
     # The worker function will now handle the rest of the prompts.
@@ -1251,7 +1245,7 @@ _select_and_get_existing_key() {
     done
 
     local key_idx
-    key_idx=$(interactive_single_select_menu "Select the private key to use:" "" "${display_paths[@]}") || return 1
+    key_idx=$(interactive_menu "single" "Select the private key to use:" "" "${display_paths[@]}") || return 1
     out_identity_file="${private_key_paths[$key_idx]}"
     return 0
 }
@@ -1441,7 +1435,7 @@ _prompt_for_identity_file_interactive() {
         fi
 
         local selected_index
-        selected_index=$(interactive_single_select_menu "Select an IdentityFile option for '${host_alias}':" "" "${menu_options[@]}")
+        selected_index=$(interactive_menu "single" "Select an IdentityFile option for '${host_alias}':" "" "${menu_options[@]}")
         if [[ $? -ne 0 ]]; then return 1; fi # User cancelled
 
         local selected_value="${option_values[$selected_index]}"
@@ -1504,7 +1498,7 @@ add_ssh_host() {
     # --- Step 1: Choose to create from scratch or clone ---
     local -a add_options=("Create a new host from scratch" "Clone settings from an existing host")
     local add_choice_idx
-    add_choice_idx=$(interactive_single_select_menu "How would you like to add the new host?" "" "${add_options[@]}")
+    add_choice_idx=$(interactive_menu "single" "How would you like to add the new host?" "" "${add_options[@]}")
     if [[ $? -ne 0 ]]; then printInfoMsg "Host creation cancelled."; return; fi
 
     # --- Step 2: Handle choice ---
@@ -2084,9 +2078,13 @@ add_saved_port_forward() {
     printOkMsg "Saved new port forward: ${new_desc}"
 }
 
-# (Private) Generic UI for the interactive port forward editors (add, edit, clone).
-# This single function replaces multiple _draw_* functions, reducing code duplication.
-# Usage: _draw_interactive_port_forward_editor_ui <mode> <new_type> ... <original_type> ...
+# (Private) A generic, reusable interactive loop for the port forward editors.
+# This function encapsulates the shared UI loop for editing and cloning forwards.
+#
+# It modifies variables in the caller's scope via namerefs.
+#
+# Usage: _interactive_port_forward_editor_loop <banner> <p_type> <p_p1> <p_h> <p_p2> <p_host> <p_desc>
+# Returns 0 if the user chooses to save, 1 if they cancel/quit.
 _draw_interactive_port_forward_editor_ui() {
     local mode="$1"
     local new_type="$2" new_p1="$3" new_h="$4" new_p2="$5" new_host="$6" new_desc="$7"
@@ -2127,13 +2125,6 @@ _draw_interactive_port_forward_editor_ui() {
     printMsgNoNewline "${T_QST_ICON} Your choice: "
 }
 
-# (Private) A generic, reusable interactive loop for the port forward editors.
-# This function encapsulates the shared UI loop for editing and cloning forwards.
-#
-# It modifies variables in the caller's scope via namerefs.
-#
-# Usage: _interactive_port_forward_editor_loop <mode> <banner> <p_type> <p_p1> <p_h> <p_p2> <p_host> <p_desc>
-# Returns 0 if the user chooses to save, 1 if they cancel/quit.
 _interactive_port_forward_editor_loop() {
     local mode="$1"
     local banner_text="$2"
@@ -2159,8 +2150,8 @@ _interactive_port_forward_editor_loop() {
             '1')
                 # Edit Type
                 clear_current_line
-                local -a type_options=("Local (-L)" "Remote (-R)"); local type_idx
-                type_idx=$(interactive_single_select_menu "Select forward type:" "" "${type_options[@]}")
+                local -a type_options=("Local (-L)" "Remote (-R)")
+                local type_idx; type_idx=$(interactive_menu "single" "Select forward type:" "" "${type_options[@]}")
                 if [[ $? -eq 0 ]]; then if [[ "$type_idx" -eq 0 ]]; then n_type="Local"; else n_type="Remote"; fi; fi
                 ;;
             '2')
@@ -2661,7 +2652,7 @@ _host_centric_view_key_handler() {
             printBanner "${C_GREEN}Add New SSH Host${T_RESET}"
             local -a add_options=("Create a new host from scratch" "Clone settings from an existing host")
             local add_choice_idx
-            add_choice_idx=$(interactive_single_select_menu "How would you like to add the new host?" "" "${add_options[@]}")
+            add_choice_idx=$(interactive_menu "single" "How would you like to add the new host?" "" "${add_options[@]}")
 
             if [[ $? -eq 0 ]]; then
                 if [[ "${add_options[$add_choice_idx]}" == "Clone settings from an existing host" ]]; then
@@ -2824,7 +2815,7 @@ _key_view_key_handler() {
             printBanner "${C_GREEN}Add New SSH Key${T_RESET}"
             local -a key_types=("ed25519 (recommended)" "rsa (legacy, 4096 bits)")
             local selected_index
-            selected_index=$(interactive_single_select_menu "Select the type of key to generate:" "" "${key_types[@]}")
+            selected_index=$(interactive_menu "single" "Select the type of key to generate:" "" "${key_types[@]}")
 
             if [[ $? -eq 0 ]]; then
                 # A selection was made. Now clear the screen and run the rest of the wizard.
