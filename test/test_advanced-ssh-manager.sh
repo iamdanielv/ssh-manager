@@ -12,6 +12,14 @@ export HOME="$TEST_DIR" # Set HOME to test dir for predictable ~ expansion
 export SSH_DIR="${TEST_DIR}/.ssh"
 export SSH_CONFIG_PATH="${SSH_DIR}/config"
 
+# Source the script we are testing. This must be done AFTER setting the
+# environment variables and BEFORE defining any mock functions.
+# shellcheck source=../advanced-ssh-manager.sh
+if ! source "$(dirname "${BASH_SOURCE[0]}")/../advanced-ssh-manager.sh"; then
+    echo "Error: Could not source advanced-ssh-manager.sh." >&2
+    exit 1
+fi
+
 # --- Test Framework ---
 test_count=0 # Global test counter
 failures=0   # Global failure counter
@@ -187,13 +195,6 @@ teardown() {
 # --- Test Cases ---
 
 test_edit_host_in_editor() {
-    # Source the script we are testing inside the first test
-    # to ensure setup variables are respected.
-    # shellcheck source=../advanced-ssh-manager.sh
-    if ! source "$(dirname "${BASH_SOURCE[0]}")/../advanced-ssh-manager.sh"; then
-        echo "Error: Could not source advanced-ssh-manager.sh." >&2
-        exit 1
-    fi
     printTestSectionHeader "Testing edit_ssh_host_in_editor"
 
     reset_test_state
