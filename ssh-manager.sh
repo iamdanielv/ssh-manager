@@ -67,9 +67,9 @@ export KEY_DELETE=$'\033[3~'
 #endregion Key Codes
 
 #region Logging & Banners
-printMsg() { printf '%s\n' "$1"; }
+printMsg() { printf '%b\n' "$1"; }
 
-printMsgNoNewline() { printf '%s' "$1"; }
+printMsgNoNewline() { printf '%b' "$1"; }
 
 printErrMsg() { printMsg "${T_ERR_ICON}${T_ERR} ${1} ${T_RESET}"; }
 
