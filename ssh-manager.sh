@@ -2084,13 +2084,9 @@ add_saved_port_forward() {
     printOkMsg "Saved new port forward: ${new_desc}"
 }
 
-# (Private) A generic, reusable interactive loop for the port forward editors.
-# This function encapsulates the shared UI loop for editing and cloning forwards.
-#
-# It modifies variables in the caller's scope via namerefs.
-#
-# Usage: _interactive_port_forward_editor_loop <banner> <p_type> <p_p1> <p_h> <p_p2> <p_host> <p_desc>
-# Returns 0 if the user chooses to save, 1 if they cancel/quit.
+# (Private) Generic UI for the interactive port forward editors (add, edit, clone).
+# This single function replaces multiple _draw_* functions, reducing code duplication.
+# Usage: _draw_interactive_port_forward_editor_ui <mode> <new_type> ... <original_type> ...
 _draw_interactive_port_forward_editor_ui() {
     local mode="$1"
     local new_type="$2" new_p1="$3" new_h="$4" new_p2="$5" new_host="$6" new_desc="$7"
@@ -2131,6 +2127,13 @@ _draw_interactive_port_forward_editor_ui() {
     printMsgNoNewline "${T_QST_ICON} Your choice: "
 }
 
+# (Private) A generic, reusable interactive loop for the port forward editors.
+# This function encapsulates the shared UI loop for editing and cloning forwards.
+#
+# It modifies variables in the caller's scope via namerefs.
+#
+# Usage: _interactive_port_forward_editor_loop <mode> <banner> <p_type> <p_p1> <p_h> <p_p2> <p_host> <p_desc>
+# Returns 0 if the user chooses to save, 1 if they cancel/quit.
 _interactive_port_forward_editor_loop() {
     local mode="$1"
     local banner_text="$2"
