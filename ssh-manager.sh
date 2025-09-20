@@ -2414,7 +2414,7 @@ _port_forward_view_key_handler() {
 
 interactive_port_forward_view() {
     _interactive_list_view \
-        "Saved Port Forwards" \
+        "Saved ${C_L_CYAN}Port Forwards${C_BLUE}" \
         "_port_forward_view_draw_header" \
         "_port_forward_view_refresh" \
         "_port_forward_view_key_handler" \
@@ -2644,7 +2644,7 @@ _server_view_key_handler() {
 
 interactive_server_management_view() {
     _interactive_list_view \
-        "Server/Host Management" \
+        "${C_L_CYAN}Server/Host${C_BLUE} Management" \
         "_server_view_draw_header" \
         "_server_view_refresh" \
         "_server_view_key_handler" \
@@ -2794,7 +2794,7 @@ _key_view_key_handler() {
 
 interactive_key_management_view() {
     _interactive_list_view \
-        "Key Management" \
+        "${C_MAGENTA}Key${C_BLUE} Management" \
         "_key_view_draw_header" \
         "_key_view_refresh" \
         "_key_view_key_handler" \
@@ -2853,45 +2853,108 @@ _setup_environment() {
     touch "$PORT_FORWARDS_CONFIG_PATH"; chmod 600 "$PORT_FORWARDS_CONFIG_PATH"
 }
 
-# Main application loop.
-main_loop() {
-    while true; do
-        clear
-        printBanner "SSH Manager"
-        local -a menu_options=(
-            "Server Management"
-            "Key Management"
-            "Port Forwarding"
-            "Open SSH config in editor"
-            "Exit"
-        )
+# --- Main Menu View Helpers ---
 
-        local selected_index
-        selected_index=$(interactive_single_select_menu "What would you like to do?" "" "${menu_options[@]}")
-        [[ $? -ne 0 ]] && { break; }
+_main_menu_view_draw_header() {
+    printMsg "${T_QST_ICON} What would you like to do?"
+}
 
-        case "${menu_options[$selected_index]}" in
-        "Server Management") interactive_server_management_view ;;
-        "Key Management") interactive_key_management_view ;;
-        "Port Forwarding") interactive_port_forward_view ;;
-        "Open SSH config in editor")
+_main_menu_view_draw_footer() {
+    printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC${T_RESET} Quit"
+    printMsg "  ${T_BOLD}Shortcuts:${T_RESET}    ${C_L_CYAN}(S)ervers${T_RESET} | ${C_MAGENTA}(K)eys${T_RESET} | ${C_L_CYAN}(P)ort${T_RESET} Forwards"
+    printMsg "                ${C_L_BLUE}(E)dit${T_RESET} ssh file | ${C_YELLOW}(Q)uit${T_RESET}"
+}
+
+_main_menu_view_refresh() {
+    local -n out_menu_options="$1"
+    local -n out_data_payloads="$2"
+    out_menu_options=(
+        "${C_L_CYAN}(S)erver${T_RESET} Management"
+        "${C_L_MAGENTA}(K)ey${T_RESET} Management"
+        "${C_L_CYAN}P)ort${T_RESET} Forwarding"
+        "${C_L_BLUE}E)dit${T_RESET} SSH config in editor"
+        "${C_YELLOW}(Q)uit${T_RESET}"
+    )
+    # The data payloads are the actions themselves.
+    out_data_payloads=(
+        "server"
+        "key"
+        "port"
+        "edit"
+        "exit"
+    )
+}
+
+_perform_main_menu_action() {
+    local action="$1"
+    local -n out_result_ref="$2"
+
+    case "$action" in
+        "server") interactive_server_management_view ;;
+        "key") interactive_key_management_view ;;
+        "port") interactive_port_forward_view ;;
+        "edit")
+            clear
             local editor="${EDITOR:-nvim}"
             if ! command -v "${editor}" &>/dev/null; then
-                # Clear screen to show the error message prominently.
-                clear; printBanner "Error"
+                printBanner "Error"
                 printErrMsg "Editor '${editor}' not found. Please set the EDITOR environment variable."
                 prompt_to_continue
             else
-                # Show cursor for the editor, then hide it again upon return to the TUI.
                 printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty
                 "${editor}" "${SSH_CONFIG_PATH}"
                 printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty
             fi
             ;;
-        "Exit") break ;;
-        esac
-    done
+        "exit") out_result_ref="exit" ;;
+    esac
 
+    if [[ "$out_result_ref" != "exit" ]]; then
+        out_result_ref="refresh"
+    fi
+}
+
+_main_menu_view_key_handler() {
+    local key="$1"
+    local selected_action="$2"
+    # local selected_index="$3" # Unused
+    local -n current_option_ref="$4"
+    local num_options="$5"
+    local -n out_result="$6"
+
+    out_result="noop" # Default to redraw
+
+    case "$key" in
+        "$KEY_UP"|"k")
+            if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref - 1 + num_options) % num_options )); fi
+            ;;
+        "$KEY_DOWN"|"j")
+            if (( num_options > 0 )); then current_option_ref=$(( (current_option_ref + 1) % num_options )); fi
+            ;;
+        "$KEY_ENTER")
+            if [[ -n "$selected_action" ]]; then _perform_main_menu_action "$selected_action" out_result; fi
+            ;;
+        's'|'S') _perform_main_menu_action "server" out_result ;;
+        'K') _perform_main_menu_action "key" out_result ;;
+        'p'|'P') _perform_main_menu_action "port" out_result ;;
+        'e'|'E') _perform_main_menu_action "edit" out_result ;;
+        'x'|'X') _perform_main_menu_action "exit" out_result ;;
+        "$KEY_ESC"|"q"|"Q") out_result="exit" ;;
+    esac
+}
+
+interactive_main_menu_view() {
+    _interactive_list_view \
+        "SSH Manager" \
+        "_main_menu_view_draw_header" \
+        "_main_menu_view_refresh" \
+        "_main_menu_view_key_handler" \
+        "_main_menu_view_draw_footer"
+}
+
+# Main application loop.
+main_loop() {
+    interactive_main_menu_view
     clear
     printOkMsg "Goodbye!"
 }
