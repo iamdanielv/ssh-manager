@@ -10,6 +10,105 @@ SSH Manager provides a simple and robust terminal interface for all your common 
 
 It is a single, self-contained `bash` script with no external dependencies beyond standard command-line tools, making it highly portable and easy to use anywhere.
 
+## Screens
+
+### Main view
+
+```shell
++ SSH Manager
+──────────────────────────────────────────────────────────────────────
+   HOST ALIAS           user@hostname[:port] (key)
+──────────────────────────────────────────────────────────────────────
+ ❯ dev                  daniel@dev.local
+   dev-clonessssssssss… daniel@dev.local:223 (~/.ssh/id_rsa)
+   kvm                  daniel@kvm.main:24
+   kube                 kuber@kube.test (~/ssh/kube_id_rsa)
+──────────────────────────────────────────────────────────────────────
+  Navigation:   ↓/↑/j/k Move | Q/ESC (Q)uit | ? for more options
+──────────────────────────────────────────────────────────────────────
+```
+
+### Expanded Footer
+
+```shell
+──────────────────────────────────────────────────────────────────────
+  Navigation:   ↓/↑/j/k Move | Q/ESC (Q)uit | ? for fewer options
+  Host Actions: (A)dd | (D)elete | (C)lone
+  Host Edit:    (E)dit host details
+  Manage:       SSH (K)eys | (P)ort Forwards
+                (O)pen ssh config in editor
+  Connection:   ENTER Connect | (t)est selected | (T)est all
+──────────────────────────────────────────────────────────────────────
+```
+
+### Add a New Host - Step 1
+
+```shell
++ Add New SSH Host
+──────────────────────────────────────────────────────────────────────
+[?] How would you like to add the new host?
+──────────────────────────────────────────────────────────────────────
+ ❯  Create a new host from scratch 
+    Clone settings from an existing host 
+──────────────────────────────────────────────────────────────────────
+  ↓/↑ Move | SPACE/ENTER to confirm | Q/ESC to cancel
+```
+
+### Add a New Host - Step 2
+
+```shell
++ Add New SSH Host
+──────────────────────────────────────────────────────────────────────
+Configure the new host:
+  1)   Host (Alias)   : (not set)
+  2)   HostName       : (not set)
+  3)   User           : daniel
+  4)   Port           : 22
+  5)   IdentityFile   : (not set)
+
+  c) (C)ancel/(D)eset fields
+  s) (S)ave and Quit
+  q) (Q)uit without saving (or press ESC)
+
+[?] Your choice: 
+```
+
+### Key Management
+
+```shell
++ Key Management
+──────────────────────────────────────────────────────────────────────
+   KEY FILENAME              TYPE       BITS   COMMENT                
+──────────────────────────────────────────────────────────────────────
+ ❯ some_Name                 ED25519    256    @iamdanielv             
+   server1                   ED25519    256    @iamdanielv   
+   id_ed25519ssssssssssssss… ED25519    256    daniel@something…
+   id_rsa                    RSA        3072   daniel@pop-os          
+──────────────────────────────────────────────────────────────────────
+  Navigation:   ↓/↑/j/k Move | Q/ESC Back
+  Key Actions:  (A)dd Key | (D)elete | (R)ename
+                (V)iew public | (C)opy to Server | Re-gen (P)ublic
+──────────────────────────────────────────────────────────────────────
+```
+
+### Port Forwards
+
+```shell
++ Saved Port Forwards
+──────────────────────────────────────────────────────────────────────
+   HOST                 FORWARD                                      
+   [ ] PID      TYPE    DESCRIPTION                                  
+──────────────────────────────────────────────────────────────────────
+ ❯ dev.local            8081:localhost:80                            
+   [-] off      Remote  web server on dev         
+   kube.test            8082:localhost:80                            
+   [-] off      Local   web server on kube
+──────────────────────────────────────────────────────────────────────
+  Navigation:   ↓/↑/j/k Move | Q/ESC Back
+  Actions:      (A)dd | (D)elete | (E)dit | (C)lone | ENTER Start/Stop
+──────────────────────────────────────────────────────────────────────
+```
+
 ## ✨ Features
 
 - **Responsive TUI**: Terminal interface with:
