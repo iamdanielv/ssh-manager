@@ -120,7 +120,7 @@ _advanced_menu_view_draw_header() {
 _advanced_menu_view_draw_footer() {
     printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC Quit${T_RESET}"
     printMsg "  ${T_BOLD}Shortcuts:${T_RESET}    ${C_BLUE}(O)pen${T_RESET} | ${C_BLUE}(E)dit${T_RESET} | ${C_L_GREEN}(B)ackup${T_RESET}"
-    printMsg "                ${C_YELLOW}E(x)port${T_RESET} | ${C_YELLOW}(I)mport${T_RESET} | ${C_YELLOW}Q)uit${T_RESET}"
+    printMsg "                ${C_YELLOW}E(x)port${T_RESET} | ${C_YELLOW}(I)mport${T_RESET} | ${C_YELLOW}(Q)uit${T_RESET}"
 }
 
 _advanced_menu_view_refresh() {
