@@ -2753,9 +2753,9 @@ _key_view_draw_header() {
 }
 
 _key_view_draw_footer() {
-    printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC${T_RESET} Back"
-    printMsg "  ${T_BOLD}Key Actions:${T_RESET}  ${C_L_GREEN}(A)dd${T_RESET} Key | ${C_L_RED}(D)elete${T_RESET} | ${C_L_CYAN}(R)ename${T_RESET}"
-    printMsg "                (${C_L_CYAN}V${T_RESET})iew public | (${C_L_BLUE}C${T_RESET})opy to Server | Re-gen (${C_L_CYAN}P${T_RESET})ublic"
+    printMsg "  ${T_BOLD}Key Actions:${T_RESET}  ${C_L_GREEN}(A)dd${T_RESET} | ${C_L_RED}(D)elete${T_RESET} | ${C_L_CYAN}(R)ename${T_RESET}               │ ${C_L_YELLOW}Q/ESC${T_RESET} Back"
+    printMsg "                ${C_L_BLUE}(C)opy${T_RESET} to server | ${C_L_CYAN}(V)iew${T_RESET} public | Re-gen ${C_L_CYAN}(P)ublic${T_RESET}"
+    printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/j${T_RESET} Move Down | ${C_L_CYAN}↑/k${T_RESET} Move up${T_RESET}"
 }
 
 # (Private) Verifies a file is a valid private key and extracts its details.
