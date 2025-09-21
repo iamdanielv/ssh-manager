@@ -118,13 +118,13 @@ _setup_environment() {
 
 _advanced_host_view_draw_footer() {
     if [[ "${_ADVANCED_VIEW_FOOTER_EXPANDED:-0}" -eq 1 ]]; then
-        printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET} | ${C_BLUE}? for fewer options${T_RESET}"
-        printMsg "  ${T_BOLD}Shortcuts:${T_RESET}    ${C_L_BLUE}(O)pen${T_RESET} ssh config in editor"
-        printMsg "                ${C_L_CYAN}ENTER/E (E)dit${T_RESET} Selected"
-        printMsg "                ${C_L_GREEN}(B)ackup${T_RESET} config"
-        printMsg "                ${C_L_YELLOW}E(x)port${T_RESET} to file | ${C_L_YELLOW}(I)mport${T_RESET} from file"
+        printMsg "  ${T_BOLD}Host Edit:${T_RESET}    ${C_L_CYAN}ENTER/E (E)dit${T_RESET} Selected              │ ${C_BLUE}? fewer options${T_RESET}"
+        printMsg "  ${T_BOLD}Management:${T_RESET}   ${C_L_BLUE}(O)pen${T_RESET} ssh config in editor          │ ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET}"
+        printMsg "                ${C_L_GREEN}(B)ackup${T_RESET} | ${C_L_YELLOW}E(x)port${T_RESET} | ${C_L_YELLOW}(I)mport${T_RESET}"
+        printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/j${T_RESET} Move Down | ${C_L_CYAN}↑/k${T_RESET} Move up${T_RESET}"
     else
-        printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET} | ${C_BLUE}? for more options${T_RESET}"
+        printMsg "  ${T_BOLD}Host Edit:${T_RESET}    ${C_L_CYAN}ENTER/E (E)dit${T_RESET} Selected              │ ${C_BLUE}? more options${T_RESET}"
+        printMsg "  ${T_BOLD}Management:${T_RESET}   ${C_L_BLUE}(O)pen${T_RESET} ssh config in editor          │ ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET}"
     fi
 }
 
