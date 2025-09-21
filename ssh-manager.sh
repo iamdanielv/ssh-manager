@@ -2381,6 +2381,7 @@ clone_saved_port_forward() {
     local -a all_types all_specs all_hosts all_descs; _get_saved_port_forwards all_types all_specs all_hosts all_descs
     all_types+=("$new_type"); all_specs+=("$new_spec"); all_hosts+=("$new_host"); all_descs+=("$new_desc")
     _save_all_port_forwards all_types all_specs all_hosts all_descs
+    clear_current_line
     printOkMsg "Saved cloned port forward."
 }
 
