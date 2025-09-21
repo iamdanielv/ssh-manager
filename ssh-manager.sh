@@ -1550,8 +1550,8 @@ _interactive_host_editor_loop() {
                 # Edit Alias
                 local prompt="Enter a short alias for the host"
                 local old_alias_to_allow=""
-                if [[ "$mode" == "edit" ]]; then prompt="Enter the new alias for the host"; old_alias_to_allow="$original_alias"; fi
-                if [[ "$mode" == "clone" ]]; then prompt="Enter the new alias for the cloned host"; fi
+                if [[ "$mode" == "edit" ]]; then prompt="Enter New alias for host"; old_alias_to_allow="$original_alias"; fi
+                if [[ "$mode" == "clone" ]]; then prompt="Enter New alias for cloned host"; fi
                 _prompt_for_unique_host_alias "$p_alias" "$prompt" "$old_alias_to_allow" "$n_alias"
                 ;;
             '2') prompt_for_input "HostName" "$p_hostname" "$n_hostname" ;;
