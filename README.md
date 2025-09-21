@@ -86,9 +86,9 @@ Configure the new host:
    id_ed25519ssssssssssssss… ED25519    256    daniel@something…
    id_rsa                    RSA        3072   daniel@pop-os          
 ──────────────────────────────────────────────────────────────────────
-  Navigation:   ↓/↑/j/k Move | Q/ESC Back
-  Key Actions:  (A)dd Key | (D)elete | (R)ename
-                (V)iew public | (C)opy to Server | Re-gen (P)ublic
+  Key Actions:  (A)dd | (D)elete | (R)ename               │ Q/ESC Back
+                (C)opy to server | (V)iew public | Re-gen (P)ublic
+  Navigation:   ↓/j Move Down | ↑/k Move up
 ──────────────────────────────────────────────────────────────────────
 ```
 
