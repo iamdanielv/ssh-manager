@@ -21,23 +21,6 @@ print_usage() {
     printMsg "  ${C_L_BLUE}-h, --help${T_RESET}     Show this help message"
 }
 
-edit_ssh_host_in_editor() {
-    printBanner "Edit Host Block in Editor"
-    local host_to_edit="$1"; if [[ -z "$host_to_edit" ]]; then host_to_edit=$(select_ssh_host "Select a host to edit:"); [[ $? -ne 0 ]] && return; fi
-    local original_block; original_block=$(_get_host_block_from_config "$host_to_edit" "$SSH_CONFIG_PATH")
-    if [[ -z "$original_block" ]]; then printErrMsg "Could not find a configuration block for '${host_to_edit}'."; return 1; fi
-    local temp_file; temp_file=$(mktemp --suffix=.sshconfig); trap 'rm -f "$temp_file"' RETURN
-    echo "# vim: set filetype=sshconfig:" > "$temp_file"; echo "$original_block" >> "$temp_file"
-    local editor="${EDITOR:-nvim}"; if ! command -v "${editor}" &>/dev/null; then printErrMsg "Editor '${editor}' not found. Please set the EDITOR environment variable."; return 1; fi
-    printInfoMsg "Opening '${host_to_edit}' in '${editor}'..."; printInfoMsg "(Save and close the editor to apply changes,\n    or exit without saving to cancel)"; prompt_to_continue
-    clear_lines_up 3; "${editor}" "$temp_file"
-    local new_block; new_block=$(grep -v "vim: set filetype=sshconfig:" "$temp_file")
-    if [[ "$new_block" == "$original_block" ]]; then printInfoMsg "No changes detected.\n    Configuration for '${host_to_edit}' remains unchanged."; return; fi
-    local config_without_host; config_without_host=$(_remove_host_block_from_config "$host_to_edit")
-    printf '%s\n\n%s' "$config_without_host" "$new_block" | cat -s > "$SSH_CONFIG_PATH"
-    printOkMsg "Host '${host_to_edit}' has been updated from editor."
-}
-
 export_ssh_hosts() {
     printBanner "Export SSH Hosts"; mapfile -t hosts < <(get_ssh_hosts)
     if [[ ${#hosts[@]} -eq 0 ]]; then printInfoMsg "No hosts found to export."; return; fi
