@@ -2444,8 +2444,8 @@ _port_forward_view_draw_header() {
 }
 
 _port_forward_view_draw_footer() {
-    printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/↑/j/k${T_RESET} Move | ${C_L_YELLOW}Q/ESC${T_RESET} Back"
     printMsg "  ${T_BOLD}Actions:${T_RESET}      ${C_L_GREEN}(A)dd${T_RESET} | ${C_L_RED}(D)elete${T_RESET} | ${C_L_CYAN}(E)dit${T_RESET} | ${C_L_BLUE}(C)lone${T_RESET} | ${C_L_GREEN}ENTER${T_RESET} Start/Stop"
+    printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/j${T_RESET} Move Down | ${C_L_CYAN}↑/k${T_RESET} Move up${T_RESET}               │ ${C_L_YELLOW}Q/ESC${T_RESET} Back"
 }
 
 _port_forward_view_refresh() {
