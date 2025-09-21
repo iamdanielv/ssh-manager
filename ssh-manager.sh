@@ -303,26 +303,36 @@ _clear_list_view_footer() {
 
 # (Private) Prompts for a port number and validates it is a valid integer (1-65535).
 # Loops until a valid port is entered or the user cancels.
-# Usage: _prompt_for_valid_port "Prompt text" "variable_name"
+# Usage: _prompt_for_valid_port "Prompt text" "variable_name" ["allow_empty"]
 # The variable's current value is used as the default.
+# If allow_empty is true, an empty input will resolve to port 22.
 # Returns 0 on success, 1 on cancellation.
 _prompt_for_valid_port() {
     local prompt_text="$1"
     local var_name="$2"
+    local allow_empty="${3:-false}"
     local -n var_ref="$var_name" # nameref to the caller's variable
 
     while true; do
         # prompt_for_input returns 1 on cancellation (ESC)
-        # It will use the current value of var_ref as the default for the prompt.
-        if ! prompt_for_input "$prompt_text" "$var_name" "$var_ref"; then
+        # We allow empty input if the caller allows it.
+        if ! prompt_for_input "$prompt_text" "$var_name" "$var_ref" "$allow_empty"; then
             return 1 # User cancelled
         fi
 
         # Validate the input now held by the nameref
-        if [[ "$var_ref" =~ ^[0-9]+$ && "$var_ref" -ge 1 && "$var_ref" -le 65535 ]]; then
+        if [[ "$allow_empty" == "true" && -z "$var_ref" ]]; then
+            # If empty is allowed, treat it as the default port 22.
+            var_ref="22"
+            return 0
+        elif [[ "$var_ref" =~ ^[0-9]+$ && "$var_ref" -ge 1 && "$var_ref" -le 65535 ]]; then
             return 0 # Valid port, success
         else
-            printErrMsg "Invalid port. Please enter a number between 1 and 65535."; sleep 2; clear_lines_up 1
+            local err_msg="Invalid port. Please enter a number between 1 and 65535."
+            if [[ "$allow_empty" == "true" ]]; then
+                err_msg="Invalid port. Please enter a number between 1-65535, or leave blank for default (22)."
+            fi
+            printErrMsg "$err_msg"; sleep 2; clear_lines_up 1
             # The loop will continue, and prompt_for_input will use the invalid value as the new default.
         fi
     done
@@ -1575,7 +1585,7 @@ _interactive_host_editor_loop() {
                 ;;
             '2') clear_current_line; prompt_for_input "HostName" "$p_hostname" "$n_hostname" ;;
             '3') clear_current_line; prompt_for_input "User" "$p_user" "$n_user" ;;
-            '4') clear_current_line; _prompt_for_valid_port "Port" "$p_port" ;;
+            '4') clear_current_line; _prompt_for_valid_port "Port" "$p_port" "true" ;;
             '5') clear_current_line; _prompt_for_identity_file_interactive "$p_identityfile" "$n_identityfile" "$n_alias" "$n_user" "$n_hostname" ;;
             'c'|'C'|'d'|'D')
                 # Discard/Reset
