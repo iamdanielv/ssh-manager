@@ -473,7 +473,6 @@ interactive_multi_select_menu() {
 _interactive_list_view() {
     local banner="$1" header_func="$2" refresh_func="$3" key_handler_func="$4" footer_func="$5"
 
-    printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty
     trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty' RETURN
 
     local current_option=0; local -a menu_options=(); local -a data_payloads=(); local num_options=0
@@ -509,7 +508,10 @@ _interactive_list_view() {
 
     # (Private) Draws the entire UI from scratch.
     _draw_full_view() {
-        clear; printBanner "$banner"; "$header_func"; printMsg "${C_GRAY}${DIV}${T_RESET}"; _draw_list
+        clear
+        # Always hide cursor on a full redraw, as `clear` may show it.
+        printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty
+        printBanner "$banner"; "$header_func"; printMsg "${C_GRAY}${DIV}${T_RESET}"; _draw_list
         printMsg "${C_GRAY}${DIV}${T_RESET}"
         local footer_content; footer_content=$("$footer_func")
         footer_lines=$(echo -e "$footer_content" | wc -l)
