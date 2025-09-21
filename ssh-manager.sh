@@ -258,6 +258,7 @@ prompt_yes_no() {
                 clear_current_line
                 # Don't re-print the (potentially multi-line) question. Just show it was cancelled.
                 printMsg " ${C_L_YELLOW}-- cancelled --${T_RESET}"
+                sleep 1
                 return 2 # Cancelled
                 ;;
             *)
@@ -299,6 +300,38 @@ _clear_list_view_footer() {
     clear_lines_down "$lines_to_clear" >/dev/tty
 
     # The cursor is now at the start of where the footer text was, ready for new output.
+}
+
+# (Private) Handles the common keypress logic for toggling an expanded footer in a list view.
+# It assumes the cursor is at the end of the list content, before the divider.
+# It uses a nameref to modify the caller's state variable.
+# Usage: _handle_footer_toggle footer_draw_func_name expanded_state_var_name
+_handle_footer_toggle() {
+    local footer_draw_func="$1"
+    local -n is_expanded_ref="$2" # Nameref to the state variable
+
+    {
+        local old_footer_content; old_footer_content=$("$footer_draw_func")
+        local old_footer_lines; old_footer_lines=$(echo -e "$old_footer_content" | wc -l)
+
+        # Toggle the state
+        is_expanded_ref=$(( 1 - is_expanded_ref ))
+
+        # --- Perform the partial redraw without a full refresh ---
+        # The cursor is at the end of the list, before the divider. Move down into the footer area.
+        printf '\n'
+
+        # Clear the old footer area (the footer text + the final bottom divider).
+        clear_lines_down $(( old_footer_lines + 1 ))
+
+        # Now, print the new footer and its final bottom divider.
+        "$footer_draw_func"
+        printMsg "${C_GRAY}${DIV}${T_RESET}"
+
+        # Move the cursor back to where the main loop expects it (end of list).
+        local new_footer_lines; new_footer_lines=$(echo -e "$("$footer_draw_func")" | wc -l)
+        move_cursor_up $(( new_footer_lines + 2 ))
+    } >/dev/tty
 }
 
 # (Private) Prompts for a port number and validates it is a valid integer (1-65535).
@@ -537,9 +570,7 @@ _interactive_list_view() {
     move_cursor_up "$lines_below_list"
 
     while true; do
-        move_cursor_up "$list_lines"
-        _draw_list
-
+        # The cursor is at the end of the list. Wait for input.
         local key; key=$(read_single_char)
         local handler_result="noop" # Default action is a no-op (redraw list)
 
@@ -551,19 +582,29 @@ _interactive_list_view() {
                 if (( num_options > 0 )); then current_option=$(( (current_option + 1) % num_options )); fi
                 ;;
             *)
-                # Not a navigation key, delegate to the view-specific handler
+                # Not a standard navigation key, delegate to the view-specific handler
                 local selected_payload=""
                 if (( num_options > 0 )); then selected_payload="${data_payloads[$current_option]}"; fi
                 "$key_handler_func" "$key" "$selected_payload" "$current_option" current_option "$num_options" handler_result
                 ;;
         esac
 
-        if [[ "$handler_result" == "refresh" ]]; then
-            _refresh_data; _draw_full_view
+        # Now, based on the result, decide what to do.
+        if [[ "$handler_result" == "exit" ]]; then
+            clear; break
+        elif [[ "$handler_result" == "refresh" ]]; then
+            _refresh_data
+            _draw_full_view
             lines_below_list=$(( footer_lines + 2 ))
             move_cursor_up "$lines_below_list"
-        elif [[ "$handler_result" == "exit" ]]; then
-            clear; break
+        elif [[ "$handler_result" == "partial_redraw" ]]; then
+            # The handler already did the drawing and cursor positioning.
+            # Do nothing and loop back to `read_single_char`.
+            :
+        else # "noop" (and default for up/down keys)
+            # Redraw just the list.
+            move_cursor_up "$list_lines"
+            _draw_list
         fi
     done
 }
@@ -1219,7 +1260,8 @@ prompt_for_input() {
             "$KEY_ESC")
                 # On cancel, clear the line and print a cancellation message.
                 clear_current_line >/dev/tty
-                printf '%b\n' "${T_QST_ICON} ${prompt_text}:"$'\n'" ${C_L_YELLOW}-- cancelled --${T_RESET}" >/dev/tty
+                printf '%b' "${T_QST_ICON} ${prompt_text}: ${C_L_YELLOW}-- cancelled --${T_RESET}" >/dev/tty
+                sleep 1
                 return 1
                 ;;
             "$KEY_BACKSPACE")
@@ -2653,32 +2695,9 @@ _host_centric_view_key_handler() {
     out_result="noop"
     case "$key" in
         '/'|'?')
-            # This handler now depends on _HOST_VIEW_FOOTER_EXPANDED being set in its calling scope.
-            # All UI manipulation must be redirected to /dev/tty to avoid interfering with command substitution.
-            {
-                # Get the current footer content to calculate its height before toggling.
-                local old_footer_content; old_footer_content=$(_host_centric_view_draw_footer)
-                local old_footer_lines; old_footer_lines=$(echo -e "$old_footer_content" | wc -l)
-
-                # Toggle the state.
-                _HOST_VIEW_FOOTER_EXPANDED=$(( 1 - ${_HOST_VIEW_FOOTER_EXPANDED:-0} ))
-
-                # --- Perform the partial redraw without a full refresh ---
-                # The cursor is on the top divider line. Move down to the footer area.
-                printf '\n'
-
-                # Clear the old footer area (the footer text + the final bottom divider).
-                # clear_lines_down moves the cursor back up after clearing.
-                clear_lines_down $(( old_footer_lines + 1 ))
-
-                # Now, print the new footer and its final bottom divider.
-                _host_centric_view_draw_footer
-                printMsg "${C_GRAY}${DIV}${T_RESET}"
-
-                # Move the cursor back to the top divider line, where the main loop expects it.
-                local new_footer_lines; new_footer_lines=$(echo -e "$(_host_centric_view_draw_footer)" | wc -l)
-                move_cursor_up $(( new_footer_lines + 2 ))
-            } >/dev/tty
+            # Delegate to the shared footer toggle handler.
+            _handle_footer_toggle "_host_centric_view_draw_footer" "_HOST_VIEW_FOOTER_EXPANDED"
+            out_result="partial_redraw"
             ;;
         "$KEY_ENTER")
             if [[ -n "$selected_host" ]]; then

@@ -111,28 +111,9 @@ _advanced_host_view_key_handler() {
 
     case "$key" in
         '/'|'?')
-            {
-                local old_footer_content; old_footer_content=$(_advanced_host_view_draw_footer)
-                local old_footer_lines; old_footer_lines=$(echo -e "$old_footer_content" | wc -l)
-
-                # Toggle the state. The variable is defined in the calling scope of _interactive_list_view.
-                _ADVANCED_VIEW_FOOTER_EXPANDED=$(( 1 - ${_ADVANCED_VIEW_FOOTER_EXPANDED:-0} ))
-
-                # --- Perform the partial redraw without a full refresh ---
-                # The cursor is at the end of the list, before the divider. Move down into the footer area.
-                printf '\n'
-
-                # Clear the old footer area (the footer text + the final bottom divider).
-                clear_lines_down $(( old_footer_lines + 1 ))
-
-                # Now, print the new footer and its final bottom divider.
-                _advanced_host_view_draw_footer
-                printMsg "${C_GRAY}${DIV}${T_RESET}"
-
-                # Move the cursor back to where the main loop expects it (end of list).
-                local new_footer_lines; new_footer_lines=$(echo -e "$(_advanced_host_view_draw_footer)" | wc -l)
-                move_cursor_up $(( new_footer_lines + 2 ))
-            } >/dev/tty
+            # Delegate to the shared footer toggle handler from ssh-manager.sh
+            _handle_footer_toggle "_advanced_host_view_draw_footer" "_ADVANCED_VIEW_FOOTER_EXPANDED"
+            out_result="partial_redraw"
             ;;
         "$KEY_ENTER"|'e'|'E')
             if [[ -n "$selected_host" ]]; then
