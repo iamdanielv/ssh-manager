@@ -1554,6 +1554,7 @@ _interactive_host_editor_loop() {
 
         case "$key" in
             '1')
+                clear_current_line
                 # Edit Alias
                 local prompt="Enter a short alias for the host"
                 local old_alias_to_allow=""
@@ -1561,9 +1562,9 @@ _interactive_host_editor_loop() {
                 if [[ "$mode" == "clone" ]]; then prompt="Enter New alias for cloned host"; fi
                 _prompt_for_unique_host_alias "$p_alias" "$prompt" "$old_alias_to_allow" "$n_alias"
                 ;;
-            '2') prompt_for_input "HostName" "$p_hostname" "$n_hostname" ;;
-            '3') prompt_for_input "User" "$p_user" "$n_user" ;;
-            '4') _prompt_for_valid_port "Port" "$p_port" ;;
+            '2') clear_current_line; prompt_for_input "HostName" "$p_hostname" "$n_hostname" ;;
+            '3') clear_current_line; prompt_for_input "User" "$p_user" "$n_user" ;;
+            '4') clear_current_line; _prompt_for_valid_port "Port" "$p_port" ;;
             '5') clear_current_line; _prompt_for_identity_file_interactive "$p_identityfile" "$n_identityfile" "$n_alias" "$n_user" "$n_hostname" ;;
             'c'|'C'|'d'|'D')
                 # Discard/Reset
@@ -1659,6 +1660,7 @@ edit_ssh_host() {
     local config_without_host; config_without_host=$(_remove_host_block_from_config "$original_alias")
     local new_host_block; new_host_block=$(_build_host_block_string "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile")
     printf '%s\n\n%s' "$config_without_host" "$new_host_block" | cat -s > "$SSH_CONFIG_PATH"
+    clear_current_line
     printOkMsg "Host '${original_alias}' has been updated to '${new_alias}'."
 
     if [[ -n "$original_identityfile" && "$expanded_new_idfile" != "$expanded_orig_idfile" ]]; then
