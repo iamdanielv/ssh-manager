@@ -24,7 +24,8 @@ It is a single, self-contained `bash` script with no external dependencies beyon
    kvm                  daniel@kvm.main:24
    kube                 kuber@kube.test (~/ssh/kube_id_rsa)
 ──────────────────────────────────────────────────────────────────────
-  Navigation:   ↓/↑/j/k Move | Q/ESC (Q)uit | ? for more options
+  Host Actions: (A)dd | (D)elete | (C)lone           │ ? more options
+  Host Edit:    (E)dit host details                  │ Q/ESC (Q)uit
 ──────────────────────────────────────────────────────────────────────
 ```
 
@@ -32,12 +33,12 @@ It is a single, self-contained `bash` script with no external dependencies beyon
 
 ```shell
 ──────────────────────────────────────────────────────────────────────
-  Navigation:   ↓/↑/j/k Move | Q/ESC (Q)uit | ? for fewer options
-  Host Actions: (A)dd | (D)elete | (C)lone
-  Host Edit:    (E)dit host details
+  Host Actions: (A)dd | (D)elete | (C)lone           │ ? fewer options
+  Host Edit:    (E)dit host details                  │ Q/ESC (Q)uit
   Manage:       SSH (K)eys | (P)ort Forwards
                 (O)pen ssh config in editor
   Connection:   ENTER Connect | (t)est selected | (T)est all
+  Navigation:   ↓/j Move Down | ↑/k Move up
 ──────────────────────────────────────────────────────────────────────
 ```
 
