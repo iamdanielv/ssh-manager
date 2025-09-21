@@ -105,8 +105,8 @@ Configure the new host:
    kube.test            8082:localhost:80                            
    [-] off      Local   web server on kube
 ──────────────────────────────────────────────────────────────────────
-  Navigation:   ↓/↑/j/k Move | Q/ESC Back
   Actions:      (A)dd | (D)elete | (E)dit | (C)lone | ENTER Start/Stop
+  Navigation:   ↓/j Move Down | ↑/k Move up              │ Q/ESC Back
 ──────────────────────────────────────────────────────────────────────
 ```
 
