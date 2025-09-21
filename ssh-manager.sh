@@ -516,8 +516,6 @@ interactive_multi_select_menu() {
 _interactive_list_view() {
     local banner="$1" header_func="$2" refresh_func="$3" key_handler_func="$4" footer_func="$5"
 
-    trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty' RETURN
-
     local current_option=0; local -a menu_options=(); local -a data_payloads=(); local num_options=0
     local list_lines=0; local footer_lines=0
 
@@ -595,7 +593,7 @@ _interactive_list_view() {
 
         # Now, based on the result, decide what to do.
         if [[ "$handler_result" == "exit" ]]; then
-            clear; break
+            break # Exit the view. The caller will handle clearing/redrawing.
         elif [[ "$handler_result" == "refresh" ]]; then
             _refresh_data
             _draw_full_view
@@ -614,9 +612,22 @@ _interactive_list_view() {
 }
 #endregion User Input
 
+
 #region Error Handling & Traps
+script_exit_handler() {
+    # This function is called by a trap on EXIT, ensuring that the terminal
+    # state is restored (e.g., showing the cursor) regardless of how the
+    # script terminates (normally, via Ctrl+C, or on an error).
+    printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty
+}
+trap 'script_exit_handler' EXIT
+
 script_interrupt_handler() {
-    trap - INT; clear; printMsg "${T_WARN_ICON} ${C_L_YELLOW}Operation cancelled by user.${T_RESET}"; exit 130; }
+    trap - INT # Disable the INT trap to prevent recursive calls.
+    clear
+    printMsg "${T_WARN_ICON} ${C_L_YELLOW}Operation cancelled by user.${T_RESET}"
+    exit 130 # Exit with status 130 (standard for Ctrl+C). The EXIT trap will handle cursor restoration.
+}
 trap 'script_interrupt_handler' INT
 #endregion Error Handling & Traps
 
