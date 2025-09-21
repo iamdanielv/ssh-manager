@@ -1492,8 +1492,14 @@ add_ssh_host_from_scratch() {
     fi
 
     # --- Save Logic ---
-    if [[ -z "$new_alias" || -z "$new_hostname" ]]; then printErrMsg "Host Alias and HostName cannot be empty."; sleep 2; return 1; fi
-    if get_ssh_hosts | grep -qFx "$new_alias"; then printErrMsg "Host alias '${new_alias}' already exists."; sleep 2; return 1; fi
+    if [[ -z "$new_alias" || -z "$new_hostname" ]]; then
+        clear_current_line
+        printErrMsg "Host Alias and HostName cannot be empty."; sleep 2; return 1
+    fi
+    if get_ssh_hosts | grep -qFx "$new_alias"; then
+        clear_current_line
+        printErrMsg "Host alias '${new_alias}' already exists."; sleep 2; return 1
+    fi
 
     _append_host_to_config "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile"
 
@@ -1654,7 +1660,8 @@ edit_ssh_host() {
     # --- Save Logic ---
     local expanded_new_idfile="${new_identityfile/#\~/$HOME}"; local expanded_orig_idfile="${original_identityfile/#\~/$HOME}"
     if [[ "$new_alias" == "$original_alias" && "$new_hostname" == "$original_hostname" && "$new_user" == "$original_user" && "$new_port" == "$original_port" && "$expanded_new_idfile" == "$expanded_orig_idfile" ]]; then
-        printInfoMsg "No changes detected. Host configuration remains unchanged."; sleep 1; return
+        clear_current_line
+        printInfoMsg "No changes detected. Host configuration remains unchanged."; sleep 1; return 0
     fi
 
     # --- Handle Key Management if Alias Changed ---
@@ -1841,7 +1848,10 @@ clone_ssh_host() {
     fi
 
     # --- Save Logic ---
-    if get_ssh_hosts | grep -qFx "$new_alias"; then printErrMsg "Host alias '${new_alias}' already exists."; sleep 2; return 1; fi
+    if get_ssh_hosts | grep -qFx "$new_alias"; then
+        clear_current_line
+        printErrMsg "Host alias '${new_alias}' already exists."; sleep 2; return 1
+    fi
 
     _append_host_to_config "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile"
 
@@ -2080,12 +2090,14 @@ add_saved_port_forward() {
     if ! _interactive_port_forward_editor_loop "add" "$banner_text" \
         new_type new_p1 new_h new_p2 new_host new_desc \
         "$original_type" "$original_p1" "$original_h" "$original_p2" "$original_host" "$original_desc"; then
-        printInfoMsg "Add cancelled. No changes were saved."
+        clear_current_line
+        printInfoMsg "Add cancelled. No changes were saved."; sleep 1
         return
     fi
 
     # --- Save Logic ---
     if [[ -z "$new_host" || -z "$new_p1" || -z "$new_h" || -z "$new_p2" ]]; then
+        clear_current_line
         printErrMsg "Host and all port/host specifiers are required."; sleep 2; return 1
     fi
 
@@ -2253,13 +2265,15 @@ edit_saved_port_forward() {
     if ! _interactive_port_forward_editor_loop "edit" "$banner_text" \
         new_type new_p1 new_h new_p2 new_host new_desc \
         "$original_type" "$original_p1" "$original_h" "$original_p2" "$original_host" "$original_desc"; then
-        printInfoMsg "Edit cancelled. No changes were saved."
+        clear_current_line
+        printInfoMsg "Edit cancelled. No changes were saved."; sleep 1
         return
     fi
 
     local new_spec="${new_p1}:${new_h}:${new_p2}"
     if [[ "$new_type" == "$original_type" && "$new_spec" == "$original_spec" && "$new_host" == "$original_host" && "$new_desc" == "$original_desc" ]]; then
-        printInfoMsg "No changes detected. Configuration remains unchanged."
+        clear_current_line
+        printInfoMsg "No changes detected. Configuration remains unchanged."; sleep 1
         return
     fi
 
@@ -2302,7 +2316,8 @@ clone_saved_port_forward() {
     if ! _interactive_port_forward_editor_loop "clone" "$banner_text" \
         new_type new_p1 new_h new_p2 new_host new_desc \
         "$type_to_clone" "$original_p1" "$original_h" "$original_p2" "$host_to_clone" "$desc_to_clone"; then
-        printInfoMsg "Clone cancelled. No changes were saved."
+        clear_current_line
+        printInfoMsg "Clone cancelled. No changes were saved."; sleep 1
         return
     fi
 
