@@ -1139,7 +1139,8 @@ open_ssh_config_in_editor() {
 
 # An interactive prompt for user input that supports cancellation.
 # It provides a rich line-editing experience including cursor movement
-# (left/right/home/end), insertion, and deletion (backspace/delete).
+# (left/right/home/end), insertion, and deletion (backspace/delete). This version
+# handles long input by scrolling the text horizontally within a single line.
 # Usage: prompt_for_input "Prompt text" "variable_name" ["default_value"] ["allow_empty"]
 # Returns 0 on success (Enter), 1 on cancellation (ESC).
 prompt_for_input() {
@@ -1148,24 +1149,43 @@ prompt_for_input() {
     local default_val="${3:-}"
     local allow_empty="${4:-false}"
 
-    # Pre-fill the input string with the default value.
     local input_str="$default_val"
-    # Cursor position is the index of the character *before* which to insert.
-    # 0 is the beginning, length is the end.
     local cursor_pos=${#input_str}
     local key
+    local view_start=0
+
+    # --- One-time setup ---
+    # Print the static part of the prompt once to reduce flicker.
+    local prompt_prefix="${T_QST_ICON} ${prompt_text}: "
+    local prompt_prefix_stripped_len
+    prompt_prefix_stripped_len=$(strip_ansi_codes "$prompt_prefix" | wc -m)
+    printMsgNoNewline "$prompt_prefix" >/dev/tty
 
     while true; do
-        # Draw the prompt and current input string.
-        clear_current_line >/dev/tty
-        printMsgNoNewline "${T_QST_ICON} ${prompt_text}: ${C_L_CYAN}${input_str}${T_RESET}" >/dev/tty
+        # --- Redraw logic ---
+        # Go to beginning of line, then move right past the static prompt.
+        printf '\r\033[%sC' "$prompt_prefix_stripped_len" >/dev/tty
 
-        # Move cursor to the correct position within the input string.
-        # The cursor is currently at the end of the line. We need to move it
-        # left by the number of characters that are *after* the cursor position.
-        local chars_after_cursor=$(( ${#input_str} - cursor_pos ))
+        local term_width; term_width=$(tput cols)
+        local available_width=$(( term_width - prompt_prefix_stripped_len ))
+        if (( available_width < 1 )); then available_width=1; fi
+
+        # --- Scrolling logic ---
+        if (( cursor_pos < view_start )); then view_start=$cursor_pos; fi
+        if (( cursor_pos >= view_start + available_width )); then view_start=$(( cursor_pos - available_width + 1 )); fi
+
+        local display_str="${input_str:$view_start:$available_width}"
+
+        # Print the dynamic part: colored input, reset color, and clear rest of line.
+        # This overwrites the previous input and clears any leftover characters.
+        printMsgNoNewline "${C_L_CYAN}${display_str}${T_RESET}${T_CLEAR_LINE}" >/dev/tty
+
+        # --- Cursor positioning ---
+        # The cursor is now at the end of the displayed string. We move it left
+        # by the number of characters that are *after* the logical cursor position.
+        local display_cursor_pos=$(( cursor_pos - view_start ))
+        local chars_after_cursor=$(( ${#display_str} - display_cursor_pos ))
         if (( chars_after_cursor > 0 )); then
-            # \033[<N>D moves cursor left N columns
             printf '\033[%sD' "$chars_after_cursor" >/dev/tty
         fi
 
@@ -1175,48 +1195,35 @@ prompt_for_input() {
             "$KEY_ENTER")
                 if [[ -n "$input_str" || "$allow_empty" == "true" ]]; then
                     var_ref="$input_str"
+                    # On success, clear the line and print the final value.
                     clear_current_line >/dev/tty
-                    # Show the prompt again with the final selected value.
                     printMsg "${T_QST_ICON} ${prompt_text}: ${C_L_GREEN}${var_ref}${T_RESET}"
-                    return 0 # Success
+                    return 0
                 fi
-                # If not valid (empty and not allowed), loop continues.
                 ;;
             "$KEY_ESC")
+                # On cancel, clear the line and print a cancellation message.
                 clear_current_line >/dev/tty
                 printf '%b\n' "${T_QST_ICON} ${prompt_text}:"$'\n'" ${C_L_YELLOW}-- cancelled --${T_RESET}" >/dev/tty
-                return 1 # Cancelled
+                return 1
                 ;;
             "$KEY_BACKSPACE")
                 if (( cursor_pos > 0 )); then
-                    # Remove character before the cursor
                     input_str="${input_str:0:cursor_pos-1}${input_str:cursor_pos}"
                     ((cursor_pos--))
                 fi
                 ;;
             "$KEY_DELETE")
                 if (( cursor_pos < ${#input_str} )); then
-                    # Remove character at the cursor
                     input_str="${input_str:0:cursor_pos}${input_str:cursor_pos+1}"
-                    # cursor_pos does not change
                 fi
                 ;;
-            "$KEY_LEFT")
-                if (( cursor_pos > 0 )); then ((cursor_pos--)); fi
-                ;;
-            "$KEY_RIGHT")
-                if (( cursor_pos < ${#input_str} )); then ((cursor_pos++)); fi
-                ;;
-            "$KEY_HOME")
-                cursor_pos=0
-                ;;
-            "$KEY_END")
-                cursor_pos=${#input_str}
-                ;;
+            "$KEY_LEFT") if (( cursor_pos > 0 )); then ((cursor_pos--)); fi ;;
+            "$KEY_RIGHT") if (( cursor_pos < ${#input_str} )); then ((cursor_pos++)); fi ;;
+            "$KEY_HOME") cursor_pos=0 ;;
+            "$KEY_END") cursor_pos=${#input_str} ;;
             *)
-                # Append single, printable characters. Ignore control sequences.
                 if (( ${#key} == 1 )) && [[ "$key" =~ [[:print:]] ]]; then
-                    # Insert character at cursor position
                     input_str="${input_str:0:cursor_pos}${key}${input_str:cursor_pos}"
                     ((cursor_pos++))
                 fi
