@@ -1124,17 +1124,22 @@ regenerate_public_key() {
     fi
 }
 
-# Opens the main SSH config file in the default editor.
-open_ssh_config_in_editor() {
-    printBanner "Open SSH Config in Editor"
-    local editor="${EDITOR:-nvim}"
-    if ! command -v "${editor}" &>/dev/null; then
-        printErrMsg "Editor '${editor}' not found. Please set the EDITOR environment variable."
-    else
-        printInfoMsg "Opening ${SSH_CONFIG_PATH} in '${editor}'..."
-        # run_menu_action (the caller) handles showing/hiding cursor
-        "${editor}" "${SSH_CONFIG_PATH}"
-    fi
+# (Private) A special-case helper to launch the default editor for the main config file.
+# This is called directly from a key handler, bypassing run_menu_action to avoid
+# the intermediate "Press any key" prompt. It takes over the screen and relies
+# on the calling view to perform a full refresh upon return.
+_launch_editor_for_config() {
+    {
+        clear
+        printMsgNoNewline "${T_CURSOR_SHOW}"
+        local editor="${EDITOR:-nvim}"
+        if ! command -v "${editor}" &>/dev/null; then
+            printErrMsg "Editor '${editor}' not found. Please set the EDITOR environment variable."
+            prompt_to_continue
+        else
+            "${editor}" "${SSH_CONFIG_PATH}"
+        fi
+    } >/dev/tty
 }
 
 # An interactive prompt for user input that supports cancellation.
@@ -2736,7 +2741,7 @@ _host_centric_view_key_handler() {
             out_result="refresh"
             ;;
         'o'|'O')
-            run_menu_action "open_ssh_config_in_editor"
+            _launch_editor_for_config
             out_result="refresh"
             ;;
         "$KEY_ESC"|"q"|"Q") out_result="exit" ;; # Exit script

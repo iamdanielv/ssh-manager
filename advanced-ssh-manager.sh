@@ -38,18 +38,6 @@ edit_ssh_host_in_editor() {
     printOkMsg "Host '${host_to_edit}' has been updated from editor."
 }
 
-open_ssh_config_in_editor() {
-    printBanner "Open SSH Config in Editor"
-    local editor="${EDITOR:-nvim}"
-    if ! command -v "${editor}" &>/dev/null; then
-        printErrMsg "Editor '${editor}' not found. Please set the EDITOR environment variable."
-    else
-        printInfoMsg "Opening ${SSH_CONFIG_PATH} in '${editor}'..."
-        # run_menu_action (the caller) handles showing/hiding cursor
-        "${editor}" "${SSH_CONFIG_PATH}"
-    fi
-}
-
 export_ssh_hosts() {
     printBanner "Export SSH Hosts"; mapfile -t hosts < <(get_ssh_hosts)
     if [[ ${#hosts[@]} -eq 0 ]]; then printInfoMsg "No hosts found to export."; return; fi
@@ -170,7 +158,7 @@ _advanced_host_view_key_handler() {
             fi
             ;;
         'o'|'O')
-            run_menu_action "open_ssh_config_in_editor"
+            _launch_editor_for_config
             out_result="refresh"
             ;;
         'b'|'B')
