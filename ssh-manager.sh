@@ -1483,7 +1483,7 @@ add_ssh_host_from_scratch() {
     if ! _interactive_host_editor_loop "add" "$banner_text" \
         new_alias new_hostname new_user new_port new_identityfile \
         "$initial_alias" "$initial_hostname" "$initial_user" "$initial_port" "$initial_identityfile"; then
-        return # User cancelled
+        return 2 # User cancelled, signal to run_menu_action to not prompt.
     fi
 
     # --- Save Logic ---
@@ -1586,7 +1586,11 @@ _interactive_host_editor_loop() {
                         printInfoMsg "Operation cancelled."; sleep 1; return 1
                     fi
                 else
-                    return 1 # No changes, just quit
+                    # No changes, just quit. Provide feedback and a small delay.
+                    clear_current_line
+                    printInfoMsg "Operation cancelled. No changes were made."
+                    sleep 2
+                    return 1
                 fi
                 ;;
             *)
@@ -1639,7 +1643,7 @@ edit_ssh_host() {
     if ! _interactive_host_editor_loop "edit" "$banner_text" \
         new_alias new_hostname new_user new_port new_identityfile \
         "$original_alias" "$original_hostname" "$original_user" "$original_port" "$original_identityfile"; then
-        return # User cancelled
+        return 2 # User cancelled, signal to run_menu_action to not prompt.
     fi
 
     # --- Save Logic ---
@@ -1828,7 +1832,7 @@ clone_ssh_host() {
     if ! _interactive_host_editor_loop "clone" "$banner_text" \
         new_alias new_hostname new_user new_port new_identityfile \
         "$new_alias" "$original_hostname" "$original_user" "$original_port" "$original_identityfile"; then
-        return # User cancelled
+        return 2 # User cancelled, signal to run_menu_action to not prompt.
     fi
 
     # --- Save Logic ---
@@ -2561,14 +2565,18 @@ run_menu_action() {
 
     # Call the function with any remaining arguments. It's expected to print its own banner.
     "$action_func" "$@"
+    local exit_code=$?
 
     # Hide the cursor again before returning to the parent view, which expects
     # the cursor to be hidden. This is done before prompt_to_continue, which
     # does not require a visible cursor.
     printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty
 
-    # After the action is complete, wait for user input before returning to the menu.
-    prompt_to_continue
+    # If the exit code is 2, it's a signal that the action handled its own
+    # "cancellation" feedback and we should skip the prompt.
+    if [[ $exit_code -ne 2 ]]; then
+        prompt_to_continue
+    fi
 }
 
 # --- Host-Centric Main View Helpers ---
