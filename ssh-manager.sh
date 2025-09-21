@@ -527,9 +527,9 @@ _interactive_list_view() {
         if (( current_option >= num_options )); then current_option=$(( num_options - 1 )); fi
         if (( current_option < 0 )); then current_option=0; fi
         # Calculate how many lines the list will render.
-        list_lines=0
         if (( num_options > 0 )); then
-            for item in "${menu_options[@]}"; do list_lines=$(( list_lines + $(echo -e "$item" | wc -l) )); done
+            # Join all array elements with a newline and count the total lines
+            list_lines=$(printf "%s\n" "${menu_options[@]}" | wc -l)
         else
             list_lines=1 # For "(No items found.)"
         fi
@@ -542,7 +542,11 @@ _interactive_list_view() {
                 if (( i == current_option )); then
                     local pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"
                     local selected_line="${menu_options[i]}"
-                    selected_line="${selected_line/${T_REVERSE}/''}"; selected_line="${selected_line/${T_RESET}/${T_RESET}${T_REVERSE}}"
+                    # Globally remove any existing reverse codes, then globally re-apply
+                    # the reverse code after every reset. This robustly handles lines
+                    # with multiple colors, ensuring the entire line is highlighted.
+                    selected_line="${selected_line//${T_REVERSE}/}"
+                    selected_line="${selected_line//${T_RESET}/${T_RESET}${T_REVERSE}}"
                     printMsg " ${pointer} ${T_REVERSE}${selected_line}${T_CLEAR_LINE}${T_RESET}"
                 else printMsg "   ${menu_options[i]}${T_CLEAR_LINE}${T_RESET}"; fi
             done
