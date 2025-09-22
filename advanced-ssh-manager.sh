@@ -81,8 +81,76 @@ backup_ssh_config() {
     else printErrMsg "Failed to create backup."; fi
 }
 
+# Allows advanced editing of a host's config block directly in $EDITOR.
+edit_ssh_host_in_editor() {
+    printBanner "Edit Host Block in Editor"
+
+    local host_to_edit="$1"
+    if [[ -z "$host_to_edit" ]]; then
+        host_to_edit=$(select_ssh_host "Select a host to edit:")
+        [[ $? -ne 0 ]] && return # select_ssh_host prints messages
+    fi
+
+    # Get the original block content
+    local original_block
+    original_block=$(_get_host_block_from_config "$host_to_edit" "$SSH_CONFIG_PATH")
+
+    if [[ -z "$original_block" ]]; then
+        printErrMsg "Could not find a configuration block for '${host_to_edit}'."
+        return 1
+    fi
+
+    # Create a temporary file to hold the block for editing
+    local temp_file
+    # Use a suffix that editors like Vim/Neovim will recognize for ssh_config syntax highlighting.
+    temp_file=$(mktemp --suffix=.sshconfig)
+    # Ensure temp file is cleaned up on exit or interrupt
+    trap 'rm -f "$temp_file"' RETURN
+
+    # Add a Vim/Neovim modeline to the top of the temp file to explicitly set the filetype.
+    # This is more reliable than relying on just the filename extension.
+    # The modeline will be stripped out before saving.
+    echo "# vim: set filetype=sshconfig:" > "$temp_file"
+    echo "$original_block" >> "$temp_file"
+
+    # Determine the editor to use
+    local editor="${EDITOR:-nvim}"
+    if ! command -v "${editor}" &>/dev/null; then
+        printErrMsg "Editor '${editor}' not found. Please set the EDITOR environment variable."
+        return 1
+    fi
+
+    printInfoMsg "Opening '${host_to_edit}' in '${editor}'..."
+    printInfoMsg "(Save and close the editor to apply changes,\n    or exit without saving to cancel)"
+    # Give the user a moment to read the message before launching the editor.
+    prompt_to_continue
+
+    # clear out the instructions
+    clear_lines_up 3
+    # Open the temp file in the editor. This is a blocking call.
+    "${editor}" "$temp_file"
+
+    # Read the potentially modified content
+    local new_block
+    # Strip the modeline we added. The rest is the user's content.
+    new_block=$(grep -v "vim: set filetype=sshconfig:" "$temp_file")
+
+    # Command substitution `$(...)` strips trailing newlines from both original_block and new_block,
+    # making them directly comparable if no changes were made.
+    if [[ "$new_block" == "$original_block" ]]; then
+        printInfoMsg "No changes detected. Configuration for '${host_to_edit}' remains unchanged."
+        return
+    fi
+
+    # Get the config content without the old host block and append the new one
+    local config_without_host; config_without_host=$(_remove_host_block_from_config "$host_to_edit")
+    printf '%s\n\n%s' "$config_without_host" "$new_block" | cat -s > "$SSH_CONFIG_PATH"
+
+    printOkMsg "Host '${host_to_edit}' has been updated from editor."
+}
+
 _setup_environment() {
-    prereq_checks "$@"; mkdir -p "$SSH_DIR"; chmod 700 "$SSH_DIR"; touch "$SSH_CONFIG_PATH"; chmod 600 "$SSH_CONFIG_PATH"
+    _setup_core_environment "$@"
 }
 
 # --- Main Menu View Helpers ---
@@ -117,7 +185,7 @@ _advanced_host_view_key_handler() {
             ;;
         "$KEY_ENTER"|'e'|'E')
             if [[ -n "$selected_host" ]]; then
-                run_menu_action "edit_ssh_host_in_editor" "$selected_host"
+                run_menu_action "edit_ssh_host_in_editor" "$selected_host" # This function is now in this script
                 out_result="refresh"
             fi
             ;;
