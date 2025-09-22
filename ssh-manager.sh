@@ -1420,15 +1420,10 @@ _prompt_for_unique_host_alias() {
 
 # --- Host Editor Feature (Private Helpers) ---
 
-# (Private) Generic UI for the interactive host editors (add, edit, clone).
-# This single function replaces _draw_interactive_add_host_ui, _draw_interactive_edit_host_ui,
-# and _draw_interactive_clone_host_ui, reducing code duplication.
-# Usage: _draw_interactive_host_editor_ui <mode> <new_alias> <new_hostname> ... <original_alias> ...
-_draw_interactive_host_editor_ui() {
-    local mode="$1"
-    local new_alias="$2" new_hostname="$3" new_user="$4" new_port="$5" new_identityfile="$6"
-    local original_alias="$7" original_hostname="$8" original_user="$9" original_port="${10}" original_identityfile="${11}"
-
+# (Private) Draws the UI for the interactive host editor.
+# It assumes all 'new_*' and 'original_*' variables are set in the calling scope.
+# It also expects 'mode' to be set.
+_host_editor_draw_ui() {
     # Helper to format a line, adding a change indicator (*) if needed.
     _format_line() {
         local key="$1" label="$2" new_val="$3" original_val="$4" is_alias="${5:-false}"
@@ -1472,6 +1467,52 @@ _draw_interactive_host_editor_ui() {
     printMsg "  ${C_L_WHITE}q) ${C_L_YELLOW}(Q)uit${T_RESET} without saving (or press ${C_L_YELLOW}ESC${T_RESET})"
     echo
     printMsgNoNewline "${T_QST_ICON} Your choice: "
+}
+
+# (Private) Handles key presses for the interactive host editor's fields.
+# Assumes all 'new_*' and 'original_*' variables are set in the calling scope.
+# Returns 0 if the key was handled, 1 otherwise.
+_host_editor_field_handler() {
+    local key="$1"
+    case "$key" in
+        '1')
+            clear_current_line
+            # Edit Alias
+            local prompt="Enter a short alias for the host"
+            local old_alias_to_allow=""
+            if [[ "$mode" == "edit" ]]; then prompt="Enter New alias for host"; old_alias_to_allow="$original_alias"; fi
+            if [[ "$mode" == "clone" ]]; then prompt="Enter New alias for cloned host"; fi
+            _prompt_for_unique_host_alias "new_alias" "$prompt" "$old_alias_to_allow" "$new_alias"
+            ;;
+        '2') clear_current_line; prompt_for_input "HostName" "new_hostname" "$new_hostname" ;;
+        '3') clear_current_line; prompt_for_input "User" "new_user" "$new_user" ;;
+        '4') clear_current_line; _prompt_for_valid_port "Port" "new_port" "true" ;;
+        '5') clear_current_line; _prompt_for_identity_file_interactive "new_identityfile" "$new_identityfile" "$new_alias" "$new_user" "$new_hostname" ;;
+        *) return 1 ;; # Unhandled key
+    esac
+    return 0 # Handled key
+}
+
+# (Private) Checks if the host editor has unsaved changes.
+# Assumes all 'new_*' and 'original_*' variables are set in the calling scope.
+# Returns 0 if there are changes, 1 otherwise.
+_host_editor_has_changes() {
+    local expanded_new_idfile="${new_identityfile/#\~/$HOME}"
+    local expanded_orig_idfile="${original_identityfile/#\~/$HOME}"
+    if [[ "$new_alias" != "$original_alias" || "$new_hostname" != "$original_hostname" || "$new_user" != "$original_user" || "$new_port" != "$original_port" || "$expanded_new_idfile" != "$expanded_orig_idfile" ]]; then
+        return 0 # true, has changes
+    fi
+    return 1 # false, no changes
+}
+
+# (Private) Resets the host editor fields to their original values.
+# Assumes all 'new_*' and 'original_*' variables are set in the calling scope.
+_host_editor_reset_fields() {
+    new_alias="$original_alias"
+    new_hostname="$original_hostname"
+    new_user="$original_user"
+    new_port="$original_port"
+    new_identityfile="$original_identityfile"
 }
 
 # (Private) Interactively prompts the user to select or create an IdentityFile when editing a host.
@@ -1564,9 +1605,9 @@ add_ssh_host() {
     local banner_text="Add New SSH Host"
 
     # Call the shared editor loop. It will modify the 'new_*' variables.
-    if ! _interactive_host_editor_loop "add" "$banner_text" \
-        new_alias new_hostname new_user new_port new_identityfile \
-        "$initial_alias" "$initial_hostname" "$initial_user" "$initial_port" "$initial_identityfile"; then
+    if ! _interactive_editor_loop "add" "$banner_text" \
+        "_host_editor_draw_ui" "_host_editor_field_handler" \
+        "_host_editor_has_changes" "_host_editor_reset_fields"; then
         return 2 # User cancelled, signal to run_menu_action to not prompt.
     fi
 
@@ -1589,64 +1630,47 @@ add_ssh_host() {
     if prompt_yes_no "Test the connection to '${new_alias}' now?" "y"; then echo; _test_connection_for_host "$new_alias"; fi
 }
 
-# (Private) A generic, reusable interactive loop for the host editors.
-# This function encapsulates the shared UI loop for adding, editing, and cloning hosts,
-# significantly reducing code duplication.
+# (Private) A generic, reusable interactive loop for entity editors (hosts, port forwards).
+# This function encapsulates the shared UI loop for adding, editing, and cloning.
 #
-# It modifies the 'new_*' variables in the caller's scope via namerefs.
+# It relies on context-specific functions being defined in the caller's scope, which
+# have access to the necessary state variables (e.g., new_alias, original_alias).
 #
-# Usage: _interactive_host_editor_loop <mode> <banner> <n_alias_var> ... <o_alias> ...
+# Usage: _interactive_editor_loop <mode> <banner> <draw_func> <field_handler_func> <change_checker_func> <reset_func>
 # Returns 0 if the user chooses to save, 1 if they cancel/quit.
-_interactive_host_editor_loop() {
+_interactive_editor_loop() {
     local mode="$1"
     local banner_text="$2"
-    # These are the *names* of the variables in the caller's scope.
-    local p_alias="$3" p_hostname="$4" p_user="$5" p_port="$6" p_identityfile="$7"
-    # Use namerefs internally for easier access to the values.
-    local -n n_alias="$p_alias" n_hostname="$p_hostname" n_user="$p_user" n_port="$p_port" n_identityfile="$p_identityfile"
-    # Original values are passed by value for comparison.
-    local original_alias="$8" original_hostname="$9" original_user="${10}" original_port="${11}" original_identityfile="${12}"
-
+    local draw_func="$3"
+    local field_handler_func="$4"
+    local change_checker_func="$5"
+    local reset_func="$6"
+ 
     # Initial draw
     clear
     printBanner "$banner_text"
-    _draw_interactive_host_editor_ui "$mode" "$n_alias" "$n_hostname" "$n_user" "$n_port" "$n_identityfile" \
-                                     "$original_alias" "$original_hostname" "$original_user" "$original_port" "$original_identityfile"
-
+    "$draw_func"
+ 
     while true; do
         local key; key=$(read_single_char)
         # Default to redrawing after any action, except for ignored keys.
         local needs_redraw=true
-
+ 
         case "$key" in
-            '1')
-                clear_current_line
-                # Edit Alias
-                local prompt="Enter a short alias for the host"
-                local old_alias_to_allow=""
-                if [[ "$mode" == "edit" ]]; then prompt="Enter New alias for host"; old_alias_to_allow="$original_alias"; fi
-                if [[ "$mode" == "clone" ]]; then prompt="Enter New alias for cloned host"; fi
-                _prompt_for_unique_host_alias "$p_alias" "$prompt" "$old_alias_to_allow" "$n_alias"
-                ;;
-            '2') clear_current_line; prompt_for_input "HostName" "$p_hostname" "$n_hostname" ;;
-            '3') clear_current_line; prompt_for_input "User" "$p_user" "$n_user" ;;
-            '4') clear_current_line; _prompt_for_valid_port "Port" "$p_port" "true" ;;
-            '5') clear_current_line; _prompt_for_identity_file_interactive "$p_identityfile" "$n_identityfile" "$n_alias" "$n_user" "$n_hostname" ;;
             'c'|'C'|'d'|'D')
                 # Discard/Reset
                 clear_current_line
                 local question="Discard all pending changes?"
-                if [[ "$mode" == "add" ]]; then question="Discard all changes and reset fields?"; fi
+                if [[ "$mode" == "add" || "$mode" == "clone" ]]; then question="Discard all changes and reset fields?"; fi
                 if prompt_yes_no "$question" "y"; then
-                    n_alias="$original_alias"; n_hostname="$original_hostname"; n_user="$original_user"; n_port="$original_port"; n_identityfile="$original_identityfile"
+                    "$reset_func"
                     printInfoMsg "Changes discarded."; sleep 1
                 fi
                 ;;
             's'|'S') return 0 ;; # Signal to Save
             'q'|'Q'|"$KEY_ESC")
                 # Quit
-                local expanded_new_idfile="${n_identityfile/#\~/$HOME}"; local expanded_orig_idfile="${original_identityfile/#\~/$HOME}"
-                if [[ "$n_alias" != "$original_alias" || "$n_hostname" != "$original_hostname" || "$n_user" != "$original_user" || "$n_port" != "$original_port" || "$expanded_new_idfile" != "$expanded_orig_idfile" ]]; then
+                if "$change_checker_func"; then
                     clear_current_line
                     if prompt_yes_no "You have unsaved changes. Quit without saving?" "n"; then
                         printInfoMsg "Operation cancelled."; sleep 1; return 1
@@ -1654,23 +1678,27 @@ _interactive_host_editor_loop() {
                 else
                     # No changes, just quit. Provide feedback and a small delay.
                     clear_current_line
-                    printInfoMsg "Operation cancelled. No changes were made."
-                    sleep 1
+                    printInfoMsg "Operation cancelled. No changes were made."; sleep 1
                     return 1
                 fi
                 ;;
             *)
-                # Any other key is ignored and does not trigger a redraw.
-                needs_redraw=false
+                # Delegate to the context-specific field handler.
+                # It returns 0 on success (key was handled), 1 on failure (key was not for it).
+                if "$field_handler_func" "$key"; then
+                    : # Key was handled, needs_redraw is already true.
+                else
+                    # Key was not handled, so no redraw is needed.
+                    needs_redraw=false
+                fi
                 ;;
         esac
-
+ 
         # Redraw the screen if any action that might have changed data or dirtied the screen was taken.
         if [[ "$needs_redraw" == "true" ]]; then
             clear
             printBanner "$banner_text"
-            _draw_interactive_host_editor_ui "$mode" "$n_alias" "$n_hostname" "$n_user" "$n_port" "$n_identityfile" \
-                                             "$original_alias" "$original_hostname" "$original_user" "$original_port" "$original_identityfile"
+            "$draw_func"
         fi
     done
 }
@@ -1706,9 +1734,9 @@ edit_ssh_host() {
     local new_alias="$original_alias" new_hostname="$original_hostname" new_user="$original_user" new_port="$original_port" new_identityfile="$original_identityfile"
 
     local banner_text="Edit SSH Host - ${C_L_CYAN}${original_alias}${C_BLUE}"
-    if ! _interactive_host_editor_loop "edit" "$banner_text" \
-        new_alias new_hostname new_user new_port new_identityfile \
-        "$original_alias" "$original_hostname" "$original_user" "$original_port" "$original_identityfile"; then
+    if ! _interactive_editor_loop "edit" "$banner_text" \
+        "_host_editor_draw_ui" "_host_editor_field_handler" \
+        "_host_editor_has_changes" "_host_editor_reset_fields"; then
         return 2 # User cancelled, signal to run_menu_action to not prompt.
     fi
 
@@ -1826,9 +1854,9 @@ clone_ssh_host() {
     done
 
     local banner_text="Clone Host from ${C_L_CYAN}${host_to_clone}${C_BLUE}"
-    if ! _interactive_host_editor_loop "clone" "$banner_text" \
-        new_alias new_hostname new_user new_port new_identityfile \
-        "$new_alias" "$original_hostname" "$original_user" "$original_port" "$original_identityfile"; then
+    if ! _interactive_editor_loop "clone" "$banner_text" \
+        "_host_editor_draw_ui" "_host_editor_field_handler" \
+        "_host_editor_has_changes" "_host_editor_reset_fields"; then
         return 2 # User cancelled, signal to run_menu_action to not prompt.
     fi
 
@@ -2065,52 +2093,12 @@ _save_all_port_forwards() {
     mv "$temp_file" "$PORT_FORWARDS_CONFIG_PATH"
 }
 
-# Adds a new port forward configuration to the saved list.
-add_saved_port_forward() {
-    printBanner "Add New Saved Port Forward"
+# --- Port Forwarding Editor Feature (Private Helpers) ---
 
-    # Set up initial empty/default values for the new forward.
-    local original_type="Local" original_p1="8080" original_h="localhost" original_p2="80" original_host="" original_desc=""
-
-    # These variables will be modified by the editor loop.
-    local new_type="$original_type" new_p1="$original_p1" new_h="$original_h" new_p2="$original_p2" new_host="$original_host" new_desc="$original_desc"
-
-    local banner_text="Add New Saved Port Forward"
-    if ! _interactive_port_forward_editor_loop "add" "$banner_text" \
-        new_type new_p1 new_h new_p2 new_host new_desc \
-        "$original_type" "$original_p1" "$original_h" "$original_p2" "$original_host" "$original_desc"; then
-        clear_current_line
-        printInfoMsg "Add cancelled. No changes were saved."; sleep 1
-        return
-    fi
-
-    # --- Save Logic ---
-    if [[ -z "$new_host" || -z "$new_p1" || -z "$new_h" || -z "$new_p2" ]]; then
-        clear_current_line
-        printErrMsg "Host and all port/host specifiers are required."; sleep 2; return 1
-    fi
-
-    local new_spec="${new_p1}:${new_h}:${new_p2}"
-    if [[ -z "$new_desc" ]]; then new_desc="${new_spec} on ${new_host}"; fi
-
-    local -a all_types all_specs all_hosts all_descs; _get_saved_port_forwards all_types all_specs all_hosts all_descs
-    all_types+=("$new_type"); all_specs+=("$new_spec"); all_hosts+=("$new_host"); all_descs+=("$new_desc")
-    _save_all_port_forwards all_types all_specs all_hosts all_descs
-    printOkMsg "Saved new port forward: ${new_desc}"
-}
-
-# (Private) A generic, reusable interactive loop for the port forward editors.
-# This function encapsulates the shared UI loop for editing and cloning forwards.
-#
-# It modifies variables in the caller's scope via namerefs.
-#
-# Usage: _interactive_port_forward_editor_loop <banner> <p_type> <p_p1> <p_h> <p_p2> <p_host> <p_desc>
-# Returns 0 if the user chooses to save, 1 if they cancel/quit.
-_draw_interactive_port_forward_editor_ui() {
-    local mode="$1"
-    local new_type="$2" new_p1="$3" new_h="$4" new_p2="$5" new_host="$6" new_desc="$7"
-    local original_type="$8" original_p1="$9" original_h="${10}" original_p2="${11}" original_host="${12}" original_desc="${13}"
-
+# (Private) Draws the UI for the interactive port forward editor.
+# It assumes all 'new_*' and 'original_*' variables are set in the calling scope.
+# It also expects 'mode' to be set.
+_port_forward_editor_draw_ui() {
     # Helper to format a line, adding a change indicator (*) if needed.
     _format_line() {
         local key="$1" label="$2" new_val="$3" original_val="$4"
@@ -2146,94 +2134,95 @@ _draw_interactive_port_forward_editor_ui() {
     printMsgNoNewline "${T_QST_ICON} Your choice: "
 }
 
-_interactive_port_forward_editor_loop() {
-    local mode="$1"
-    local banner_text="$2"
-    # These are the *names* of the variables in the caller's scope.
-    local p_type="$3" p_p1="$4" p_h="$5" p_p2="$6" p_host="$7" p_desc="$8"
-    # Use namerefs internally for easier access to the values.
-    local -n n_type="$p_type" n_p1="$p_p1" n_h="$p_h" n_p2="$p_p2" n_host="$p_host" n_desc="$p_desc"
-    # Original values are passed by value for comparison.
-    local original_type="$9" original_p1="${10}" original_h="${11}" original_p2="${12}" original_host="${13}" original_desc="${14}"
+# (Private) Handles key presses for the interactive port forward editor's fields.
+# Assumes all 'new_*' and 'original_*' variables are set in the calling scope.
+# Returns 0 if the key was handled, 1 otherwise.
+_port_forward_editor_field_handler() {
+    local key="$1"
+    case "$key" in
+        '1')
+            # Edit Type
+            clear_current_line
+            local -a type_options=("Local (-L)" "Remote (-R)")
+            local type_idx; type_idx=$(interactive_menu "single" "Select forward type:" "" "${type_options[@]}")
+            if [[ $? -eq 0 ]]; then if [[ "$type_idx" -eq 0 ]]; then new_type="Local"; else new_type="Remote"; fi; fi
+            ;;
+        '2')
+            # Edit SSH Host
+            clear_current_line
+            local selected_host; selected_host=$(select_ssh_host "Select a new SSH host:" "false")
+            if [[ $? -eq 0 ]]; then new_host="$selected_host"; fi
+            ;;
+        '3')
+            # Edit Port 1
+            clear_current_line
+            local p1_label="Local Port"; if [[ "$new_type" == "Remote" ]]; then p1_label="Remote Port"; fi
+            _prompt_for_valid_port "Enter the ${p1_label} to listen on" "new_p1"
+            ;;
+        '4')
+            # Edit Host
+            clear_current_line
+            local h_prompt="Enter the REMOTE host to connect to (from ${new_host})"; if [[ "$new_type" == "Remote" ]]; then h_prompt="Enter the LOCAL host to connect to"; fi
+            prompt_for_input "$h_prompt" "new_h" "$new_h"
+            ;;
+        '5')
+            # Edit Port 2
+            clear_current_line
+            local p2_prompt="Enter the REMOTE port to connect to"; if [[ "$new_type" == "Remote" ]]; then p2_prompt="Enter the LOCAL port to connect to"; fi
+            _prompt_for_valid_port "$p2_prompt" "new_p2"
+            ;;
+        '6')
+            # Edit Description
+            prompt_for_input "Enter a short description" "new_desc" "$new_desc"
+            ;;
+        *) return 1 ;; # Unhandled key
+    esac
+    return 0 # Handled key
+}
 
-    # Initial draw
-    clear
-    printBanner "$banner_text"
-    _draw_interactive_port_forward_editor_ui "$mode" "$n_type" "$n_p1" "$n_h" "$n_p2" "$n_host" "$n_desc" \
-                                             "$original_type" "$original_p1" "$original_h" "$original_p2" "$original_host" "$original_desc"
+# (Private) Checks if the port forward editor has unsaved changes.
+_port_forward_editor_has_changes() {
+    if [[ "$new_type" != "$original_type" || "$new_p1" != "$original_p1" || "$new_h" != "$original_h" || "$new_p2" != "$original_p2" || "$new_host" != "$original_host" || "$new_desc" != "$original_desc" ]]; then return 0; fi
+    return 1
+}
 
-    while true; do
-        local key; key=$(read_single_char)
-        # Default to redrawing after any action, except for ignored keys.
-        local needs_redraw=true
+# (Private) Resets the port forward editor fields to their original values.
+_port_forward_editor_reset_fields() {
+    new_type="$original_type"; new_p1="$original_p1"; new_h="$original_h"; new_p2="$original_p2"; new_host="$original_host"; new_desc="$original_desc"
+}
 
-        case "$key" in
-            '1')
-                # Edit Type
-                clear_current_line
-                local -a type_options=("Local (-L)" "Remote (-R)")
-                local type_idx; type_idx=$(interactive_menu "single" "Select forward type:" "" "${type_options[@]}")
-                if [[ $? -eq 0 ]]; then if [[ "$type_idx" -eq 0 ]]; then n_type="Local"; else n_type="Remote"; fi; fi
-                ;;
-            '2')
-                # Edit SSH Host
-                clear_current_line
-                local selected_host; selected_host=$(select_ssh_host "Select a new SSH host:" "false")
-                if [[ $? -eq 0 ]]; then n_host="$selected_host"; fi
-                ;;
-            '3')
-                # Edit Port 1
-                clear_current_line
-                local p1_label="Local Port"; if [[ "$n_type" == "Remote" ]]; then p1_label="Remote Port"; fi
-                _prompt_for_valid_port "Enter the ${p1_label} to listen on" "$p_p1"
-                ;;
-            '4')
-                # Edit Host
-                clear_current_line
-                local h_prompt="Enter the REMOTE host to connect to (from ${n_host})"; if [[ "$n_type" == "Remote" ]]; then h_prompt="Enter the LOCAL host to connect to"; fi
-                prompt_for_input "$h_prompt" "$p_h" "$n_h"
-                ;;
-            '5')
-                # Edit Port 2
-                clear_current_line
-                local p2_prompt="Enter the REMOTE port to connect to"; if [[ "$n_type" == "Remote" ]]; then p2_prompt="Enter the LOCAL port to connect to"; fi
-                _prompt_for_valid_port "$p2_prompt" "$p_p2"
-                ;;
-            '6')
-                # Edit Description
-                prompt_for_input "Enter a short description" "$p_desc" "$n_desc"
-                ;;
-            'c'|'C'|'d'|'D')
-                # Discard
-                clear_current_line
-                local question="Discard all pending changes?"; if [[ "$mode" == "add" || "$mode" == "clone" ]]; then question="Discard all changes and reset fields?"; fi
-                if prompt_yes_no "$question" "y"; then
-                    n_type="$original_type"; n_p1="$original_p1"; n_h="$original_h"; n_p2="$original_p2"; n_host="$original_host"; n_desc="$original_desc"
-                    printInfoMsg "Changes discarded."; sleep 1
-                fi
-                ;;
-            's'|'S') return 0 ;; # Signal to Save
-            'q'|'Q'|"$KEY_ESC")
-                # Quit
-                if [[ "$n_type" != "$original_type" || "$n_p1" != "$original_p1" || "$n_h" != "$original_h" || "$n_p2" != "$original_p2" || "$n_host" != "$original_host" || "$n_desc" != "$original_desc" ]]; then
-                    clear_current_line
-                    if prompt_yes_no "You have unsaved changes. Quit without saving?" "n"; then printInfoMsg "Operation cancelled."; sleep 1; return 1; fi
-                else return 1; fi
-                ;;
-            *)
-                # Any other key is ignored and does not trigger a redraw.
-                needs_redraw=false
-                ;;
-        esac
+# Adds a new port forward configuration to the saved list.
+add_saved_port_forward() {
+    printBanner "Add New Saved Port Forward"
 
-        # Redraw the screen if any action that might have changed data or dirtied the screen was taken.
-        if [[ "$needs_redraw" == "true" ]]; then
-            clear
-            printBanner "$banner_text"
-            _draw_interactive_port_forward_editor_ui "$mode" "$n_type" "$n_p1" "$n_h" "$n_p2" "$n_host" "$n_desc" \
-                                                     "$original_type" "$original_p1" "$original_h" "$original_p2" "$original_host" "$original_desc"
-        fi
-    done
+    # Set up initial empty/default values for the new forward.
+    local original_type="Local" original_p1="8080" original_h="localhost" original_p2="80" original_host="" original_desc=""
+
+    # These variables will be modified by the editor loop.
+    local new_type="$original_type" new_p1="$original_p1" new_h="$original_h" new_p2="$original_p2" new_host="$original_host" new_desc="$original_desc"
+
+    local banner_text="Add New Saved Port Forward"
+    if ! _interactive_editor_loop "add" "$banner_text" \
+        "_port_forward_editor_draw_ui" "_port_forward_editor_field_handler" \
+        "_port_forward_editor_has_changes" "_port_forward_editor_reset_fields"; then
+        clear_current_line
+        printInfoMsg "Add cancelled. No changes were saved."; sleep 1
+        return
+    fi
+
+    # --- Save Logic ---
+    if [[ -z "$new_host" || -z "$new_p1" || -z "$new_h" || -z "$new_p2" ]]; then
+        clear_current_line
+        printErrMsg "Host and all port/host specifiers are required."; sleep 2; return 1
+    fi
+
+    local new_spec="${new_p1}:${new_h}:${new_p2}"
+    if [[ -z "$new_desc" ]]; then new_desc="${new_spec} on ${new_host}"; fi
+
+    local -a all_types all_specs all_hosts all_descs; _get_saved_port_forwards all_types all_specs all_hosts all_descs
+    all_types+=("$new_type"); all_specs+=("$new_spec"); all_hosts+=("$new_host"); all_descs+=("$new_desc")
+    _save_all_port_forwards all_types all_specs all_hosts all_descs
+    printOkMsg "Saved new port forward: ${new_desc}"
 }
 
 # Edits a saved port forward configuration.
@@ -2251,9 +2240,9 @@ edit_saved_port_forward() {
     local new_p1="$original_p1" new_h="$original_h" new_p2="$original_p2"
 
     local banner_text="Edit Saved Port Forward - ${C_L_CYAN}${original_desc}${C_BLUE}"
-    if ! _interactive_port_forward_editor_loop "edit" "$banner_text" \
-        new_type new_p1 new_h new_p2 new_host new_desc \
-        "$original_type" "$original_p1" "$original_h" "$original_p2" "$original_host" "$original_desc"; then
+    if ! _interactive_editor_loop "edit" "$banner_text" \
+        "_port_forward_editor_draw_ui" "_port_forward_editor_field_handler" \
+        "_port_forward_editor_has_changes" "_port_forward_editor_reset_fields"; then
         clear_current_line
         printInfoMsg "Edit cancelled. No changes were saved."; sleep 1
         return
@@ -2299,9 +2288,9 @@ clone_saved_port_forward() {
     local new_p1=$((original_p1 + 1)) new_h="$original_h" new_p2="$original_p2"
 
     local banner_text="Clone Saved Port Forward - from ${C_L_CYAN}${desc_to_clone}${C_BLUE}"
-    if ! _interactive_port_forward_editor_loop "clone" "$banner_text" \
-        new_type new_p1 new_h new_p2 new_host new_desc \
-        "$type_to_clone" "$original_p1" "$original_h" "$original_p2" "$host_to_clone" "$desc_to_clone"; then
+    if ! _interactive_editor_loop "clone" "$banner_text" \
+        "_port_forward_editor_draw_ui" "_port_forward_editor_field_handler" \
+        "_port_forward_editor_has_changes" "_port_forward_editor_reset_fields"; then
         clear_current_line
         printInfoMsg "Clone cancelled. No changes were saved."; sleep 1
         return
