@@ -1,32 +1,19 @@
 #!/bin/bash
 set -o pipefail
 
-# This script must be run from the root of the `ssh-manager` directory.
-
-# --- Test Setup ---
-
-# Override config paths BEFORE sourcing the scripts.
-# The `ssh-manager.sh` script will use these variables if they are set.
-export TEST_DIR
-TEST_DIR=$(mktemp -d)
-export HOME="$TEST_DIR" # Set HOME to test dir for predictable ~ expansion
-export SSH_DIR="${TEST_DIR}/.ssh"
-export SSH_CONFIG_PATH="${SSH_DIR}/config"
-
-# Source the script we are testing. This must be done AFTER setting the
-# environment variables and BEFORE defining any mock functions.
-# shellcheck source=../ssh-manager.sh
-if ! source "$(dirname "${BASH_SOURCE[0]}")/../ssh-manager.sh"; then
-    echo "Error: Could not source ssh-manager.sh." >&2
-    exit 1
-fi
-
 # Source the shared test helpers
 # shellcheck source=./test_helpers.sh
 if ! source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"; then
     echo "Error: Could not source test_helpers.sh." >&2
     exit 1
 fi
+
+# --- Test Setup ---
+
+# This script must be run from the root of the `ssh-manager` directory.
+
+# Initialize environment and source the script under test.
+initialize_test_environment "ssh-manager.sh"
 
 # --- Test Cases ---
 

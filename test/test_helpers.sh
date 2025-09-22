@@ -75,90 +75,101 @@ print_test_summary() {
 
 # --- Mocks & Test State ---
 
-# Mock for the `ssh` command.
-ssh() {
-    if [[ "$1" == "-G" ]]; then
-        local host_alias="$2"
-        local block
-        block=$(_get_host_block_from_config "$host_alias" "$SSH_CONFIG_PATH")
+# Initializes the test environment variables and sources the script under test.
+initialize_test_environment() {
+    local script_to_source="$1"
 
-        if [[ -n "$block" ]]; then
-            echo "$block" | awk '
-                BEGIN { has_port=0 }
-                function get_val() { val = ""; for (i=2; i<=NF; i++) { val = (val ? val " " : "") $i }; return val }
-                /^[ \t]*[Hh]ost[Nn]ame/ {print "hostname", get_val()}
-                /^[ \t]*[Uu]ser/ {print "user", get_val()}
-                /^[ \t]*[Pp]ort/ {print "port", get_val(); has_port=1}
-                /^[ \t]*[Ii]dentity[Ff]ile/ {print "identityfile", get_val()}
-                END { if (!has_port) { print "port 22" } }
-            '
+    # Override config paths BEFORE sourcing the scripts.
+    # The main scripts will use these variables if they are set.
+    export TEST_DIR
+    TEST_DIR=$(mktemp -d)
+    export HOME="$TEST_DIR" # Set HOME to test dir for predictable ~ expansion
+    export SSH_DIR="${TEST_DIR}/.ssh"
+    export SSH_CONFIG_PATH="${SSH_DIR}/config"
+
+    # Source the script we are testing. This must be done AFTER setting the
+    # environment variables.
+    # shellcheck source=../ssh-manager.sh
+    if ! source "$(dirname "${BASH_SOURCE[0]}")/../${script_to_source}"; then
+        echo "Error: Could not source ${script_to_source}." >&2
+        exit 1
+    fi
+}
+
+# (Private) Defines all mock functions. This should be called from `setup()`
+# *after* the script-under-test has been sourced, to ensure these mocks
+# overwrite the real functions.
+_define_mocks() {
+    # Mock for the `ssh` command.
+    ssh() {
+        if [[ "$1" == "-G" ]]; then
+            local host_alias="$2"
+            local block
+            block=$(_get_host_block_from_config "$host_alias" "$SSH_CONFIG_PATH")
+
+            if [[ -n "$block" ]]; then
+                echo "$block" | awk '
+                    BEGIN { has_port=0 }
+                    function get_val() { val = ""; for (i=2; i<=NF; i++) { val = (val ? val " " : "") $i }; return val }
+                    /^[ \t]*[Hh]ost[Nn]ame/ {print "hostname", get_val()}
+                    /^[ \t]*[Uu]ser/ {print "user", get_val()}
+                    /^[ \t]*[Pp]ort/ {print "port", get_val(); has_port=1}
+                    /^[ \t]*[Ii]dentity[Ff]ile/ {print "identityfile", get_val()}
+                    END { if (!has_port) { print "port 22" } }
+                '
+            fi
+            return 0
         fi
-        return 0
-    fi
-    echo "ERROR: Unmocked call to ssh with args: $*" >&2
-    return 127
-}
+        echo "ERROR: Unmocked call to ssh with args: $*" >&2
+        return 127
+    }
 
-# Mock for `mv`. It records calls to a log file.
-MOCK_MV_CALL_LOG_FILE="${TEST_DIR}/mock_mv_calls.log"
-mv() { echo "$*" >> "$MOCK_MV_CALL_LOG_FILE"; }
+    # Mocks for file system commands.
+    mv() { echo "$*" >> "$MOCK_MV_CALL_LOG_FILE"; }
+    cp() { echo "$*" >> "$MOCK_CP_CALL_LOG_FILE"; }
+    rm() { echo "$*" >> "$MOCK_RM_CALL_LOG_FILE"; }
 
-# Mock for `cp`. It records calls to a log file.
-MOCK_CP_CALL_LOG_FILE="${TEST_DIR}/mock_cp_calls.log"
-cp() { echo "$*" >> "$MOCK_CP_CALL_LOG_FILE"; }
+    # Mock for `date`.
+    date() {
+        if [[ "$1" == "+%Y-%m-%d_%H-%M-%S" ]]; then
+            echo "$MOCK_DATE_RETURN"
+        else
+            /bin/date "$@"
+        fi
+    }
 
-# Mock for `rm`. It records calls to a log file.
-MOCK_RM_CALL_LOG_FILE="${TEST_DIR}/mock_rm_calls.log"
-rm() { echo "$*" >> "$MOCK_RM_CALL_LOG_FILE"; }
+    # Mock for `prompt_for_input`.
+    prompt_for_input() {
+        local var_name="$2"
+        local -n var_ref="$2"
+        if [[ -n "$MOCK_PROMPT_CANCEL_ON_VAR" && "$var_name" == "$MOCK_PROMPT_CANCEL_ON_VAR" ]]; then return 1; fi
+        var_ref="${MOCK_PROMPT_INPUTS[$var_name]:-${3:-}}"; return 0
+    }
 
-# Mock for `date`.
-MOCK_DATE_RETURN="2023-01-01_12-00-00"
-date() {
-    if [[ "$1" == "+%Y-%m-%d_%H-%M-%S" ]]; then
-        echo "$MOCK_DATE_RETURN"
-    else
-        /bin/date "$@"
-    fi
-}
+    # Mock for `select_ssh_host`
+    select_ssh_host() { echo "$MOCK_SELECT_HOST_RETURN"; return 0; }
 
-# Mock for `prompt_for_input`.
-declare -A MOCK_PROMPT_INPUTS
-MOCK_PROMPT_CANCEL_ON_VAR=""
-prompt_for_input() {
-    local var_name="$2"
-    local -n var_ref="$2"
-    if [[ -n "$MOCK_PROMPT_CANCEL_ON_VAR" && "$var_name" == "$MOCK_PROMPT_CANCEL_ON_VAR" ]]; then return 1; fi
-    var_ref="${MOCK_PROMPT_INPUTS[$var_name]:-${3:-}}"; return 0
-}
+    # Mock for `prompt_yes_no`.
+    prompt_yes_no() { return "$MOCK_PROMPT_RESULT"; }
 
-# Mock for `select_ssh_host`
-MOCK_SELECT_HOST_RETURN="test-server-1"
-select_ssh_host() { echo "$MOCK_SELECT_HOST_RETURN"; return 0; }
+    # Mock for `prompt_to_continue` to avoid interactive waits in tests.
+    prompt_to_continue() { return 0; }
 
-# Mock for `prompt_yes_no`.
-MOCK_PROMPT_RESULT=0
-prompt_yes_no() { return "$MOCK_PROMPT_RESULT"; }
+    # Mock for `read_single_char` to drive interactive menus.
+    read_single_char() {
+        if (( MOCK_READ_SINGLE_CHAR_COUNTER < ${#MOCK_READ_SINGLE_CHAR_INPUTS[@]} )); then
+            echo "${MOCK_READ_SINGLE_CHAR_INPUTS[MOCK_READ_SINGLE_CHAR_COUNTER]}"
+            ((MOCK_READ_SINGLE_CHAR_COUNTER++))
+        else
+            echo "q" # Default to 'q' to prevent tests from hanging
+        fi
+    }
 
-# Mock for `prompt_to_continue` to avoid interactive waits in tests.
-prompt_to_continue() { return 0; }
-
-# Mock for `read_single_char` to drive interactive menus.
-MOCK_READ_SINGLE_CHAR_INPUTS=()
-MOCK_READ_SINGLE_CHAR_COUNTER=0
-read_single_char() {
-    if (( MOCK_READ_SINGLE_CHAR_COUNTER < ${#MOCK_READ_SINGLE_CHAR_INPUTS[@]} )); then
-        echo "${MOCK_READ_SINGLE_CHAR_INPUTS[MOCK_READ_SINGLE_CHAR_COUNTER]}"
-        ((MOCK_READ_SINGLE_CHAR_COUNTER++))
-    else
-        echo "q" # Default to 'q' to prevent tests from hanging
-    fi
-}
-
-# Mock for `interactive_multi_select_menu`.
-MOCK_MULTI_SELECT_MENU_OUTPUT=""
-interactive_multi_select_menu() {
-    echo -e "$MOCK_MULTI_SELECT_MENU_OUTPUT"
-    if [[ -n "$MOCK_MULTI_SELECT_MENU_OUTPUT" ]]; then return 0; else return 1; fi
+    # Mock for `interactive_multi_select_menu`.
+    interactive_multi_select_menu() {
+        echo -e "$MOCK_MULTI_SELECT_MENU_OUTPUT"
+        if [[ -n "$MOCK_MULTI_SELECT_MENU_OUTPUT" ]]; then return 0; else return 1; fi
+    }
 }
 
 # --- Test Harness ---
@@ -175,6 +186,7 @@ Host test-server-1
 Host test-server-2
     HostName server2.example.com
     User user2
+    # No port, should default to 22
 
 Host test-server-3
     HostName 192.168.1.103
@@ -186,6 +198,25 @@ EOF
 setup() {
     initialize_test_suite
     reset_test_state
+
+    # Initialize mock state variables. They need to be global to be accessible
+    # by both the test cases and the mock functions.
+    MOCK_MV_CALL_LOG_FILE="${TEST_DIR}/mock_mv_calls.log"
+    MOCK_CP_CALL_LOG_FILE="${TEST_DIR}/mock_cp_calls.log"
+    MOCK_RM_CALL_LOG_FILE="${TEST_DIR}/mock_rm_calls.log"
+    MOCK_DATE_RETURN="2023-01-01_12-00-00"
+    declare -g -A MOCK_PROMPT_INPUTS
+    MOCK_PROMPT_CANCEL_ON_VAR=""
+    MOCK_SELECT_HOST_RETURN="test-server-1"
+    MOCK_PROMPT_RESULT=0
+    declare -g -a MOCK_READ_SINGLE_CHAR_INPUTS=()
+    MOCK_READ_SINGLE_CHAR_COUNTER=0
+    MOCK_MULTI_SELECT_MENU_OUTPUT=""
+
+    # Define all mock functions, overwriting the real ones sourced from the script.
+    # This MUST be done after `initialize_test_environment` has been called by the
+    # test script, and `setup` is the correct place for it.
+    _define_mocks
 }
 
 teardown() {
