@@ -1653,7 +1653,7 @@ _interactive_host_editor_loop() {
                     # No changes, just quit. Provide feedback and a small delay.
                     clear_current_line
                     printInfoMsg "Operation cancelled. No changes were made."
-                    sleep 2
+                    sleep 1
                     return 1
                 fi
                 ;;
