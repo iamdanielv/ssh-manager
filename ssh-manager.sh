@@ -1118,14 +1118,16 @@ delete_ssh_key() {
         question+="\n  (Public key not found, will only delete private key)"
     fi
 
-    if prompt_yes_no "$question" "n"; then
+    prompt_yes_no "$question" "n"
+    local choice=$?
+    if [[ $choice -eq 0 ]]; then
         if run_with_spinner "Deleting key pair..." rm -f "$key_base_path" "$pub_key_path"; then
             printOkMsg "Key pair deleted."
         else
             printErrMsg "Failed to delete key pair."
         fi
-    else
-        printInfoMsg "Deletion cancelled."
+    elif [[ $choice -eq 1 ]]; then
+        printInfoMsg "Key pair was ${C_YELLOW}not deleted${T_RESET}."
     fi
 }
 
@@ -2901,15 +2903,19 @@ _key_view_key_handler() {
                 if [[ -f "$pub_key_path" ]]; then question+="\n     Public:  ${pub_key_path/#$HOME/\~}"; fi
 
                 # Show the prompt in the cleared footer area.
-                if prompt_yes_no "$question" "n"; then
+                prompt_yes_no "$question" "n"
+                local choice=$?
+                if [[ $choice -eq 0 ]]; then
                     # User confirmed. Run the deletion with a spinner.
                     # The spinner will print its own success/error message.
                     run_with_spinner "Deleting key pair..." rm -f "$selected_key_path" "${selected_key_path}.pub"
                     # Wait a moment for the user to see the result before redrawing.
                     sleep 1
+                elif [[ $choice -eq 1 ]]; then
+                    printInfoMsg "Key pair was ${C_YELLOW}not deleted${T_RESET}."
+                    sleep 1
                 fi
                 # Whether confirmed or cancelled, trigger a full refresh to restore the UI.
-                # The prompt_yes_no function prints a cancellation message if needed.
                 out_result="refresh"
             fi ;;
         'r'|'R')
