@@ -2790,14 +2790,6 @@ interactive_host_centric_view() {
         "_host_centric_view_draw_footer"
 }
 
-interactive_key_management_view() {
-    _interactive_list_view \
-        "${C_MAGENTA}Key${C_BLUE} Management" \
-        "_key_view_draw_header" \
-        "_key_view_refresh" \
-        "_key_view_key_handler" \
-        "_key_view_draw_footer"
-}
 # --- Key Management View Helpers ---
 
 _key_view_draw_header() {
