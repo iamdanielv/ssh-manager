@@ -225,7 +225,14 @@ prompt_yes_no() {
     local question="$1"
     local default_answer="${2:-}" # Optional second argument
     local prompt_suffix
+    local has_error=false
     local answer
+
+    # Local helper to reduce repetition in the case statement below.
+    _cleanup_lines() {
+        clear_current_line >/dev/tty
+        if $has_error; then clear_lines_up 1; fi
+    }
 
     # Determine the prompt suffix based on the default
     if [[ "$default_answer" == "y" ]]; then
@@ -237,8 +244,8 @@ prompt_yes_no() {
     fi
 
     while true; do
-        printf '%b' "${T_QST_ICON} ${question} ${prompt_suffix} "
-        answer=$(read_single_char)
+        printf '%b' "${T_QST_ICON} ${question} ${prompt_suffix} " >/dev/tty
+        answer=$(read_single_char </dev/tty)
         
         # If the answer is the ENTER key, use the default.
         if [[ "$answer" == "$KEY_ENTER" ]]; then
@@ -247,23 +254,24 @@ prompt_yes_no() {
 
         case "$answer" in
             [Yy])
-                clear_current_line
+                _cleanup_lines
                 return 0 # Success (Yes)
                 ;;
             [Nn])
-                clear_current_line
+                _cleanup_lines
                 return 1 # Failure (No)
                 ;;
             "$KEY_ESC"|"q")
-                clear_current_line
+                _cleanup_lines
                 # Don't re-print the (potentially multi-line) question. Just show it was cancelled.
-                printMsg " ${C_L_YELLOW}-- cancelled --${T_RESET}"
+                printMsg " ${C_L_YELLOW}-- cancelled --${T_RESET}" >/dev/tty
                 sleep 1
                 return 2 # Cancelled
                 ;;
             *)
-                clear_current_line
-                printErrMsg "Invalid input. Please enter 'y' or 'n'."
+                _cleanup_lines
+                printErrMsg "Invalid input - \`${answer}\`. Please enter 'y' or 'n'." >/dev/tty
+                has_error=true
                 # Loop will continue.
                 ;;
         esac
