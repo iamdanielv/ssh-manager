@@ -2745,7 +2745,7 @@ _host_centric_view_key_handler() {
                     _cleanup_orphaned_key "$identity_file_to_check"
                     sleep 2 # Give user a moment to see the result.
                 elif [[ $choice -eq 1 ]]; then
-                    printInfoMsg "Host '${selected_host}' was not deleted."
+                    printInfoMsg "Host '${selected_host}' was ${C_YELLOW}not deleted${T_RESET}."
                     sleep 1
                 fi
                 # Whether confirmed, cancelled, or 'no', trigger a full redraw to restore the UI.
