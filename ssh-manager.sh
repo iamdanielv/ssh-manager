@@ -224,55 +224,55 @@ read_single_char() {
 prompt_yes_no() {
     local question="$1"
     local default_answer="${2:-}" # Optional second argument
-    local prompt_suffix
     local has_error=false
     local answer
+    local prompt_suffix
 
-    # Local helper to reduce repetition in the case statement below.
-    _cleanup_lines() {
+    # Determine the prompt suffix based on the default
+    if [[ "$default_answer" == "y" ]]; then prompt_suffix="(Y/n)"; elif [[ "$default_answer" == "n" ]]; then prompt_suffix="(y/N)"; else prompt_suffix="(y/n)"; fi
+
+    # Calculate how many lines the question string itself occupies.
+    local question_lines; question_lines=$(echo -e "$question" | wc -l)
+
+    # (Private) Clears the entire prompt area (error message + question).
+    _clear_all_prompt_content() {
+        # The cursor is at the end of the prompt's last line.
         clear_current_line >/dev/tty
+        # Clear the rest of the prompt lines above it.
+        if (( question_lines > 1 )); then clear_lines_up $(( question_lines - 1 )); fi
+        # If an error message was visible, it was above the prompt, so clear it too.
         if $has_error; then clear_lines_up 1; fi
     }
 
-    # Determine the prompt suffix based on the default
-    if [[ "$default_answer" == "y" ]]; then
-        prompt_suffix="(Y/n)"
-    elif [[ "$default_answer" == "n" ]]; then
-        prompt_suffix="(y/N)"
-    else
-        prompt_suffix="(y/n)"
-    fi
+    # Initial prompt print
+    printf '%b' "${T_QST_ICON} ${question} ${prompt_suffix} " >/dev/tty
 
     while true; do
-        printf '%b' "${T_QST_ICON} ${question} ${prompt_suffix} " >/dev/tty
         answer=$(read_single_char </dev/tty)
-        
+
         # If the answer is the ENTER key, use the default.
         if [[ "$answer" == "$KEY_ENTER" ]]; then
             answer="$default_answer"
         fi
 
         case "$answer" in
-            [Yy])
-                _cleanup_lines
-                return 0 # Success (Yes)
-                ;;
-            [Nn])
-                _cleanup_lines
-                return 1 # Failure (No)
+            [Yy]|[Nn])
+                _clear_all_prompt_content
+                if [[ "$answer" =~ [Yy] ]]; then return 0; else return 1; fi
                 ;;
             "$KEY_ESC"|"q")
-                _cleanup_lines
-                # Don't re-print the (potentially multi-line) question. Just show it was cancelled.
+                _clear_all_prompt_content
                 printMsg " ${C_L_YELLOW}-- cancelled --${T_RESET}" >/dev/tty
                 sleep 1
                 return 2 # Cancelled
                 ;;
             *)
-                _cleanup_lines
+                # Invalid input: Clear the prompt, clear any old error, print new error, re-print prompt.
+                _clear_all_prompt_content
                 printErrMsg "Invalid input - \`${answer}\`. Please enter 'y' or 'n'." >/dev/tty
                 has_error=true
-                # Loop will continue.
+                # Re-print the prompt below the new error message.
+                printf '%b' "${T_QST_ICON} ${question} ${prompt_suffix} " >/dev/tty
                 ;;
         esac
     done
