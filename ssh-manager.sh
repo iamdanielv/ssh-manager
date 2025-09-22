@@ -2339,18 +2339,15 @@ edit_saved_port_forward() {
 }
 
 # Deletes a saved port forward configuration.
+# This function only performs the file modification; it does not prompt the user.
 delete_saved_port_forward() {
-    local idx_to_delete="$1" type="$2" spec="$3" host="$4"
-    if ! prompt_yes_no "Permanently delete saved forward '${spec}' on '${host}'?" "n"; then printInfoMsg "Deletion cancelled."; return; fi
+    local idx_to_delete="$1"
     local -a all_types all_specs all_hosts all_descs; _get_saved_port_forwards all_types all_specs all_hosts all_descs
     local -a new_types new_specs new_hosts new_descs
     for i in "${!all_types[@]}"; do
-        if [[ "$i" -ne "$idx_to_delete" ]]; then
-            new_types+=("${all_types[i]}"); new_specs+=("${all_specs[i]}"); new_hosts+=("${all_hosts[i]}"); new_descs+=("${all_descs[i]}")
-        fi
+        if [[ "$i" -ne "$idx_to_delete" ]]; then new_types+=("${all_types[i]}"); new_specs+=("${all_specs[i]}"); new_hosts+=("${all_hosts[i]}"); new_descs+=("${all_descs[i]}"); fi
     done
     _save_all_port_forwards new_types new_specs new_hosts new_descs
-    printOkMsg "Deleted saved port forward."
 }
 
 # Clones a saved port forward configuration.
@@ -2575,14 +2572,15 @@ _port_forward_view_key_handler() {
                 _clear_list_view_footer "_port_forward_view_draw_footer"
                 # Show the prompt in the cleared footer area.
                 printBanner "${C_RED}Delete / Remove Port Forward${T_RESET}"
-                if prompt_yes_no "Permanently ${C_RED}delete${T_RESET} saved forward\n     '${spec}' on '${host}'?" "n"; then
-                    local -a all_types all_specs all_hosts all_descs; _get_saved_port_forwards all_types all_specs all_hosts all_descs
-                    local -a new_types new_specs new_hosts new_descs
-                    for i in "${!all_types[@]}"; do
-                        if [[ "$i" -ne "$idx" ]]; then new_types+=("${all_types[i]}"); new_specs+=("${all_specs[i]}"); new_hosts+=("${all_hosts[i]}"); new_descs+=("${all_descs[i]}"); fi
-                    done
-                    _save_all_port_forwards new_types new_specs new_hosts new_descs
-                    printOkMsg "Deleted saved port forward."; sleep 1
+                prompt_yes_no "Permanently ${C_RED}delete${T_RESET} saved forward\n     '${spec}' on '${host}'?" "n"
+                local choice=$?
+                if [[ $choice -eq 0 ]]; then
+                    delete_saved_port_forward "$idx"
+                    printOkMsg "${C_RED}Deleted${T_RESET} saved port forward."
+                    sleep 1
+                elif [[ $choice -eq 1 ]]; then
+                    printInfoMsg "Port forward was ${C_YELLOW}not deleted${T_RESET}."
+                    sleep 1
                 fi
                 out_result="refresh"
             fi ;;
