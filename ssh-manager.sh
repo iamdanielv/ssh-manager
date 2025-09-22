@@ -1549,8 +1549,10 @@ _prompt_for_identity_file_interactive() {
 
 # --- Host Lifecycle Functions ---
 
-# Prompts user for details and adds a new host to the SSH config from scratch.
-add_ssh_host_from_scratch() {
+# Prompts user for details and adds a new host to the SSH config.
+# This is the primary function for adding a host from scratch, used by both
+# the interactive menu and the `-a` command-line flag.
+add_ssh_host() {
     printBanner "Add New SSH Host"
 
     # --- Create from scratch logic ---
@@ -1583,30 +1585,6 @@ add_ssh_host_from_scratch() {
         if prompt_yes_no "Copy public key to the new server now?" "y"; then copy_ssh_id_for_host "$new_alias" "${new_identityfile}.pub"; fi
     fi
     if prompt_yes_no "Test the connection to '${new_alias}' now?" "y"; then echo; _test_connection_for_host "$new_alias"; fi
-}
-
-# Prompts user for details and adds a new host to the SSH config.
-# This version is for the command-line flag and presents the initial choice.
-add_ssh_host() {
-    printBanner "Add New SSH Host"
-
-    # --- Step 1: Choose to create from scratch or clone ---
-    local -a add_options=("Create a new host from scratch" "Clone settings from an existing host")
-    local add_choice_idx
-    add_choice_idx=$(interactive_menu "single" "How would you like to add the new host?" "" "${add_options[@]}")
-    if [[ $? -ne 0 ]]; then printInfoMsg "Host creation cancelled."; return; fi
-
-    # --- Step 2: Handle choice ---
-    if [[ "${add_options[$add_choice_idx]}" == "Clone settings from an existing host" ]]; then
-        # Delegate to the dedicated clone function.
-        # shellcheck disable=SC2119
-        clone_ssh_host
-        return
-    fi
-
-    # --- Create from scratch logic ---
-    # This function is now separate, call it.
-    add_ssh_host_from_scratch
 }
 
 # (Private) A generic, reusable interactive loop for the host editors.
@@ -2739,21 +2717,9 @@ _host_centric_view_key_handler() {
             fi
             ;;
         'a'|'A')
-            # Move cursor down past the list and its top divider.
-            _clear_list_view_footer "_host_centric_view_draw_footer"
-            # Show the prompt in the cleared footer area.
-            printBanner "${C_GREEN}Add New SSH Host${T_RESET}"
-            local -a add_options=("Create a new host from scratch" "Clone settings from an existing host")
-            local add_choice_idx
-            add_choice_idx=$(interactive_menu "single" "How would you like to add the new host?" "" "${add_options[@]}")
-
-            if [[ $? -eq 0 ]]; then
-                if [[ "${add_options[$add_choice_idx]}" == "Clone settings from an existing host" ]]; then
-                    run_menu_action "clone_ssh_host"
-                else
-                    run_menu_action "add_ssh_host_from_scratch"
-                fi
-            fi
+            # `run_menu_action` clears the screen and `add_ssh_host`
+            # handles the entire interactive flow for adding a new host from scratch.
+            run_menu_action "add_ssh_host"
             out_result="refresh"
             ;;
         'e'|'E') if [[ -n "$selected_host" ]]; then run_menu_action "edit_ssh_host" "$selected_host"; out_result="refresh"; fi ;;
