@@ -2729,26 +2729,26 @@ _host_centric_view_key_handler() {
                 _clear_list_view_footer "_host_centric_view_draw_footer"
                 # Show the prompt in the cleared footer area.
                 printBanner "${C_RED}Delete / Remove Host${T_RESET}"
-                if prompt_yes_no "Are you sure you want to ${C_RED}remove${T_RESET} '${selected_host}'?\n    This will permanently delete the host from your config." "n"; then
+                prompt_yes_no "Are you sure you want to ${C_RED}remove${T_RESET} '${selected_host}'?\n    This will permanently delete the host from your config." "n"
+                local choice=$?
+                if [[ $choice -eq 0 ]]; then
                     # User confirmed deletion.
-                    # Get the IdentityFile path *before* removing the host from the config.
                     local identity_file_to_check
                     identity_file_to_check=$(_get_explicit_ssh_config_value "$selected_host" "IdentityFile")
 
-                    # Get the config content without the specified host block
                     local new_config_content
                     new_config_content=$(_remove_host_block_from_config "$selected_host")
 
-                    # Overwrite the config file with the new content, squeezing blank lines
                     echo "$new_config_content" | cat -s > "$SSH_CONFIG_PATH"
-                    printOkMsg "Host '${selected_host}' has been removed."
+                    printOkMsg "Host '${selected_host}' has been ${C_RED}DELETED${T_RESET}."
 
-                    # Now, handle the potentially orphaned key in the same interactive space.
                     _cleanup_orphaned_key "$identity_file_to_check"
-                    sleep 1 # Give user a moment to see the result.
+                    sleep 2 # Give user a moment to see the result.
+                elif [[ $choice -eq 1 ]]; then
+                    printInfoMsg "Host '${selected_host}' was not deleted."
+                    sleep 1
                 fi
-                # Whether confirmed or cancelled, trigger a full redraw to restore the UI.
-                # The prompt_yes_no function prints a cancellation message if needed.
+                # Whether confirmed, cancelled, or 'no', trigger a full redraw to restore the UI.
                 out_result="refresh"
             fi
             ;;
