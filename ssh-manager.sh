@@ -1958,20 +1958,11 @@ _cleanup_orphaned_key() {
     fi
 }
 
-# Removes a host entry from the SSH config file.
-remove_ssh_host() {
-    printBanner "Remove SSH Host"
-
+# (Private) Worker function to perform the host removal and key cleanup.
+# Does not prompt the user.
+# Usage: _remove_host_and_cleanup <host_to_remove>
+_remove_host_and_cleanup() {
     local host_to_remove="$1"
-    if [[ -z "$host_to_remove" ]]; then
-        host_to_remove=$(select_ssh_host "Select a host to remove:")
-        [[ $? -ne 0 ]] && return
-    fi
-
-    if ! prompt_yes_no "Are you sure you want to remove '${host_to_remove}'?\n    This will permanently delete the host from your config." "n"; then
-        printInfoMsg "Removal cancelled."
-        return
-    fi
 
     # Get the IdentityFile path *before* removing the host from the config.
     local identity_file_to_check
@@ -1984,10 +1975,23 @@ remove_ssh_host() {
     # Overwrite the config file with the new content, squeezing blank lines
     echo "$new_config_content" | cat -s > "$SSH_CONFIG_PATH"
 
-    printOkMsg "Host '${host_to_remove}' has been removed."
+    printOkMsg "Host '${host_to_remove}' has been ${C_RED}DELETED${T_RESET}."
 
     # Pass the actual key file path to the cleanup function.
     _cleanup_orphaned_key "$identity_file_to_check"
+}
+
+# Removes a host entry from the SSH config file.
+remove_ssh_host() {
+    printBanner "Remove SSH Host"
+
+    local host_to_remove="$1"
+    if [[ -z "$host_to_remove" ]]; then host_to_remove=$(select_ssh_host "Select a host to remove:"); [[ $? -ne 0 ]] && return; fi
+
+    prompt_yes_no "Are you sure you want to remove '${host_to_remove}'?\n    This will permanently delete the host from your config." "n"
+    local choice=$?
+    if [[ $choice -eq 0 ]]; then _remove_host_and_cleanup "$host_to_remove";
+    elif [[ $choice -eq 1 ]]; then printInfoMsg "Host '${host_to_remove}' was ${C_YELLOW}not deleted${T_RESET}."; fi
 }
 
 # (Private) Helper to test connection to a specific host using BatchMode.
@@ -2733,16 +2737,7 @@ _host_centric_view_key_handler() {
                 local choice=$?
                 if [[ $choice -eq 0 ]]; then
                     # User confirmed deletion.
-                    local identity_file_to_check
-                    identity_file_to_check=$(_get_explicit_ssh_config_value "$selected_host" "IdentityFile")
-
-                    local new_config_content
-                    new_config_content=$(_remove_host_block_from_config "$selected_host")
-
-                    echo "$new_config_content" | cat -s > "$SSH_CONFIG_PATH"
-                    printOkMsg "Host '${selected_host}' has been ${C_RED}DELETED${T_RESET}."
-
-                    _cleanup_orphaned_key "$identity_file_to_check"
+                    _remove_host_and_cleanup "$selected_host"
                     sleep 2 # Give user a moment to see the result.
                 elif [[ $choice -eq 1 ]]; then
                     printInfoMsg "Host '${selected_host}' was ${C_YELLOW}not deleted${T_RESET}."
