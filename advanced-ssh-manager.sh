@@ -88,15 +88,18 @@ _setup_environment() {
 # --- Main Menu View Helpers ---
 
 _advanced_host_view_draw_footer() {
+    local output=""
     if [[ "${_ADVANCED_VIEW_FOOTER_EXPANDED:-0}" -eq 1 ]]; then
-        printMsg "  ${T_BOLD}Host Edit:${T_RESET}    ${C_L_CYAN}ENTER/E (E)dit${T_RESET} Selected              │ ${C_BLUE}? fewer options${T_RESET}"
-        printMsg "  ${T_BOLD}Management:${T_RESET}   ${C_L_BLUE}(O)pen${T_RESET} ssh config in editor          │ ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET}"
-        printMsg "                ${C_L_GREEN}(B)ackup${T_RESET} | ${C_L_YELLOW}E(x)port${T_RESET} | ${C_L_YELLOW}(I)mport${T_RESET}"
-        printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/j${T_RESET} Move Down | ${C_L_CYAN}↑/k${T_RESET} Move up${T_RESET}"
+        output+="  ${T_BOLD}Host Edit:${T_RESET}    ${C_L_CYAN}ENTER/E (E)dit${T_RESET} Selected              │ ${C_BLUE}? fewer options${T_RESET}\n"
+        output+="  ${T_BOLD}Management:${T_RESET}   ${C_L_BLUE}(O)pen${T_RESET} ssh config in editor          │ ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET}\n"
+        output+="                ${C_L_GREEN}(B)ackup${T_RESET} | ${C_L_YELLOW}E(x)port${T_RESET} | ${C_L_YELLOW}(I)mport${T_RESET}\n"
+        output+="  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/j${T_RESET} Move Down | ${C_L_CYAN}↑/k${T_RESET} Move up${T_RESET}"
     else
-        printMsg "  ${T_BOLD}Host Edit:${T_RESET}    ${C_L_CYAN}ENTER/E (E)dit${T_RESET} Selected              │ ${C_BLUE}? more options${T_RESET}"
-        printMsg "  ${T_BOLD}Management:${T_RESET}   ${C_L_BLUE}(O)pen${T_RESET} ssh config in editor          │ ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET}"
+        output+="  ${T_BOLD}Host Edit:${T_RESET}    ${C_L_CYAN}ENTER/E (E)dit${T_RESET} Selected              │ ${C_BLUE}? more options${T_RESET}\n"
+        output+="  ${T_BOLD}Management:${T_RESET}   ${C_L_BLUE}(O)pen${T_RESET} ssh config in editor          │ ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET}"
     fi
+    # This function's output is captured, so it should not add a trailing newline.
+    printf '%b' "$output"
 }
 
 _advanced_host_view_key_handler() {
@@ -127,8 +130,6 @@ _advanced_host_view_key_handler() {
             ;;
         'b'|'B')
             {
-                _clear_list_view_footer "_advanced_host_view_draw_footer"
-                printMsgNoNewline "${T_CURSOR_SHOW}"
                 printBanner "Backup SSH Config"
 
                 backup_ssh_config

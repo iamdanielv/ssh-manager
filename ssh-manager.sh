@@ -224,8 +224,7 @@ read_single_char() {
 prompt_yes_no() {
     local question="$1"
     local default_answer="${2:-}" # Optional second argument
-    local prompt_suffix
-    local answer
+    local prompt_suffix; local answer; local error_msg=""
 
     # Determine the prompt suffix based on the default
     if [[ "$default_answer" == "y" ]]; then
@@ -236,35 +235,42 @@ prompt_yes_no() {
         prompt_suffix="(y/n)"
     fi
 
+    local prompt_string="${T_QST_ICON} ${question} ${prompt_suffix} "
+
+    # Save the initial cursor position. The area below is assumed to be clear.
+    printf '\033[s' >/dev/tty
+
     while true; do
-        printf '%b' "${T_QST_ICON} ${question} ${prompt_suffix} "
+        # Restore cursor to the saved position and clear everything below it.
+        printf '\033[u\033[J' >/dev/tty
+
+        # If an error message is set from the previous loop, display it first.
+        # Otherwise, print the standard divider. This saves one line in the error case.
+        if [[ -n "$error_msg" ]]; then
+            printErrMsg "$error_msg"
+        else
+            printMsg "${C_GRAY}${DIV}${T_RESET}"
+        fi
+
+        printf '%b' "$prompt_string"
         answer=$(read_single_char)
-        
+
         # If the answer is the ENTER key, use the default.
         if [[ "$answer" == "$KEY_ENTER" ]]; then
             answer="$default_answer"
         fi
 
         case "$answer" in
-            [Yy])
-                clear_current_line
-                return 0 # Success (Yes)
-                ;;
-            [Nn])
-                clear_current_line
-                return 1 # Failure (No)
-                ;;
+            [Yy]) printf '\033[u\033[J' >/dev/tty; return 0 ;; # Success (Yes)
+            [Nn]) printf '\033[u\033[J' >/dev/tty; return 1 ;; # Failure (No)
             "$KEY_ESC"|"q")
-                clear_current_line
-                # Don't re-print the (potentially multi-line) question. Just show it was cancelled.
+                printf '\033[u\033[J' >/dev/tty
                 printMsg " ${C_L_YELLOW}-- cancelled --${T_RESET}"
                 sleep 1
                 return 2 # Cancelled
                 ;;
             *)
-                clear_current_line
-                printErrMsg "Invalid input. Please enter 'y' or 'n'."
-                # Loop will continue.
+                error_msg="Invalid input - '${answer}'. Please enter 'y' or 'n'."
                 ;;
         esac
     done
@@ -280,58 +286,14 @@ prompt_to_continue() {
     clear_lines_up 1
 }
 
-# (Private) Clears the footer area of an interactive list view.
-# The cursor is expected to be at the end of the list content (before the divider).
-# The function leaves the cursor at the start of the now-cleared footer area.
-# Usage: _clear_list_view_footer <footer_draw_func_name>
-_clear_list_view_footer() {
-    local footer_draw_func="$1"
-
-    # The cursor is at the end of the list content.
-    # Move down one line to be past the list's bottom divider.
-    printf '\n' >/dev/tty
-
-    # Calculate how many lines the footer is currently using by calling its draw function.
-    local footer_content; footer_content=$("$footer_draw_func")
-    local footer_lines; footer_lines=$(echo -e "$footer_content" | wc -l)
-
-    # The area to clear is the footer text + the final bottom divider line.
-    local lines_to_clear=$(( footer_lines + 1 ))
-    clear_lines_down "$lines_to_clear" >/dev/tty
-
-    # The cursor is now at the start of where the footer text was, ready for new output.
-}
-
 # (Private) Handles the common keypress logic for toggling an expanded footer in a list view.
-# It assumes the cursor is at the end of the list content, before the divider.
-# It uses a nameref to modify the caller's state variable.
+# It simply toggles the state variable. The calling view is responsible for triggering a redraw.
 # Usage: _handle_footer_toggle footer_draw_func_name expanded_state_var_name
 _handle_footer_toggle() {
-    local footer_draw_func="$1"
+    # local footer_draw_func="$1" # The first argument is no longer used but kept for compatibility.
     local -n is_expanded_ref="$2" # Nameref to the state variable
-
-    {
-        local old_footer_content; old_footer_content=$("$footer_draw_func")
-        local old_footer_lines; old_footer_lines=$(echo -e "$old_footer_content" | wc -l)
-
-        # Toggle the state
-        is_expanded_ref=$(( 1 - is_expanded_ref ))
-
-        # --- Perform the partial redraw without a full refresh ---
-        # The cursor is at the end of the list, before the divider. Move down into the footer area.
-        printf '\n'
-
-        # Clear the old footer area (the footer text + the final bottom divider).
-        clear_lines_down $(( old_footer_lines + 1 ))
-
-        # Now, print the new footer and its final bottom divider.
-        "$footer_draw_func"
-        printMsg "${C_GRAY}${DIV}${T_RESET}"
-
-        # Move the cursor back to where the main loop expects it (end of list).
-        local new_footer_lines; new_footer_lines=$(echo -e "$("$footer_draw_func")" | wc -l)
-        move_cursor_up $(( new_footer_lines + 2 ))
-    } >/dev/tty
+    # Toggle the state
+    is_expanded_ref=$(( 1 - is_expanded_ref ))
 }
 
 # (Private) Prompts for a port number and validates it is a valid integer (1-65535).
@@ -510,69 +472,113 @@ interactive_multi_select_menu() {
 #   - key_handler_func: Name of a function to handle key presses. It receives the key, the selected
 #                       data payload, the selected index (before move), a nameref to the current index,
 #                       the total number of options, and a nameref for the result. It is responsible for
-#                       all navigation logic. It must set the result nameref to one of:
-#                       "noop" - redraw, "refresh" - reload data, "exit" - close the view.
+#                       setting the result nameref to one of: "noop" (redraw list), "refresh" (reload
+#                       data & full redraw), "partial_redraw" (full redraw), or "exit".
 #   - footer_func: The name of a function that prints the help text at the bottom.
 _interactive_list_view() {
-    local banner="$1" header_func="$2" refresh_func="$3" key_handler_func="$4" footer_func="$5"
+    local banner="$1" header_func="$2" refresh_func="$3" key_handler_func="$4" footer_func="$5"; local top_fixed_lines=0; local bottom_fixed_lines=0
+    trap 'printf "\033[r" >/dev/tty' RETURN
 
     local current_option=0; local -a menu_options=(); local -a data_payloads=(); local num_options=0
-    local list_lines=0; local footer_lines=0
 
     # (Private) Fetches data and clamps the selection index.
     _refresh_data() {
         "$refresh_func" menu_options data_payloads; num_options=${#menu_options[@]}
         if (( current_option >= num_options )); then current_option=$(( num_options - 1 )); fi
         if (( current_option < 0 )); then current_option=0; fi
-        # Calculate how many lines the list will render.
-        if (( num_options > 0 )); then
-            # Join all array elements with a newline and count the total lines
-            list_lines=$(printf "%s\n" "${menu_options[@]}" | wc -l)
-        else
-            list_lines=1 # For "(No items found.)"
-        fi
     }
 
     # (Private) Draws only the list portion of the UI.
     _draw_list() {
+        # The cursor is assumed to be at the top of the scroll region. First, clear the
+        # entire scrollable area. A manual line-by-line clear is used here because the
+        # standard \033[J command can be buggy and clear the entire screen on some terminals.
+        # We need to know the scroll region boundaries, which are calculated in _draw_full_view.
+        local footer_start_line=$(( term_lines - bottom_fixed_lines + 1 ))
+        local scroll_start=$(( top_fixed_lines + 1 ))
+        local scroll_end=$(( footer_start_line - 1 ))
+        local scroll_height=$(( scroll_end - scroll_start + 1 ))
+        if (( scroll_height > 0 )); then
+            for ((i=0; i<scroll_height; i++)); do printf '\033[K\n'; done # Clear line and move to next
+            printf '\033[%sA' "$scroll_height" # Move cursor back to top of region
+        fi
+
+        # Now, draw the list content.
         if [[ $num_options -gt 0 ]]; then
             for i in "${!menu_options[@]}"; do
                 if (( i == current_option )); then
                     local pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"
                     local selected_line="${menu_options[i]}"
-                    # Globally remove any existing reverse codes, then globally re-apply
-                    # the reverse code after every reset. This robustly handles lines
-                    # with multiple colors, ensuring the entire line is highlighted.
                     selected_line="${selected_line//${T_REVERSE}/}"
                     selected_line="${selected_line//${T_RESET}/${T_RESET}${T_REVERSE}}"
                     printMsg " ${pointer} ${T_REVERSE}${selected_line}${T_CLEAR_LINE}${T_RESET}"
                 else printMsg "   ${menu_options[i]}${T_CLEAR_LINE}${T_RESET}"; fi
             done
-        else printMsg "  ${C_GRAY}(No items found.)${T_CLEAR_LINE}${T_RESET}"; fi
+        else
+            printMsg "  ${C_GRAY}(No items found.)${T_CLEAR_LINE}${T_RESET}"
+        fi
     }
 
     # (Private) Draws the entire UI from scratch.
     _draw_full_view() {
-        clear
-        # Always hide cursor on a full redraw, as `clear` may show it.
-        printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty
-        printBanner "$banner"; "$header_func"; printMsg "${C_GRAY}${DIV}${T_RESET}"; _draw_list
-        printMsg "${C_GRAY}${DIV}${T_RESET}"
+        local banner_content; banner_content=$(generate_banner_string "$banner")
+        local header_content; header_content=$("$header_func")
         local footer_content; footer_content=$("$footer_func")
-        footer_lines=$(echo -e "$footer_content" | wc -l)
-        printMsg "$footer_content"
+
+        # Use `grep -c .` to count non-empty lines. This is more robust than `wc -l`
+        # as it correctly handles content that doesn't end with a newline.
+        local banner_lines; banner_lines=$(echo -e "$banner_content" | grep -c . || true); banner_lines=${banner_lines:-0}
+        local header_lines; header_lines=$(echo -e "$header_content" | grep -c . || true); header_lines=${header_lines:-0}
+        top_fixed_lines=$(( banner_lines + header_lines + 1 ))
+
+        # The footer content can be empty if the function is a no-op, so we must
+        # handle the case where `grep` returns nothing and the command substitution
+        # would be empty. Default to 0 in that case.
+        local footer_lines; footer_lines=$(echo -e "$footer_content" | grep -c . || true)
+        footer_lines=${footer_lines:-0}
+        bottom_fixed_lines=$(( footer_lines + 1 ))
+
+        # Get terminal dimensions. `stty size` is often more reliable than `tput`.
+        # These are now script-global for access by _draw_list
+        read -r term_lines term_cols < <(stty size 2>/dev/null)
+        term_lines=${term_lines:-24} # Default to 24 if stty fails
+        term_cols=${term_cols:-80}   # Default to 80 if stty fails
+
+        clear; printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty
+        # 1. Draw header at the top. The cursor will be left at the start of the scrollable area.
+        printMsg "$banner_content"; printMsg "$header_content"; printMsg "${C_GRAY}${DIV}${T_RESET}"
+
+        # The cursor is now at the start of the scrollable area. Save its position.
+        printf '\033[s' >/dev/tty
+
+        # 2. Draw footer at the bottom, being careful not to cause a scroll on the last line.
+        local footer_start_line=$(( term_lines - bottom_fixed_lines + 1 ))
+        printf '\033[%s;1H' "$footer_start_line" >/dev/tty
         printMsg "${C_GRAY}${DIV}${T_RESET}"
+        # The last line must not have a trailing newline, to prevent scrolling the screen up.
+        printMsgNoNewline "$footer_content"
+
+        # 3. Restore cursor to the start of the scrollable area.
+        printf '\033[u' >/dev/tty
+
+        # 4. Set the scroll region. The cursor is now at the top of this region.
+        local scroll_start=$(( top_fixed_lines + 1 ))
+        local scroll_end=$(( footer_start_line - 1 ))
+
+        if (( scroll_start < scroll_end )); then
+            printf '\033[%s;%sr' "$scroll_start" "$scroll_end" >/dev/tty
+        fi
+
+        # 5. Position cursor at the top of the scroll region and draw the list.
+        printf '\033[%s;1H' "$scroll_start" >/dev/tty
+        _draw_list
     }
 
     _refresh_data # Initial data load
     _draw_full_view
 
-    # Position cursor for the loop: at the end of the list, before the first bottom divider.
-    local lines_below_list=$(( footer_lines + 2 ))
-    move_cursor_up "$lines_below_list"
-
     while true; do
-        # The cursor is at the end of the list. Wait for input.
+        # The cursor is somewhere in the scrollable region. Wait for input.
         local key; key=$(read_single_char)
         local handler_result="noop" # Default action is a no-op (redraw list)
 
@@ -584,10 +590,26 @@ _interactive_list_view() {
                 if (( num_options > 0 )); then current_option=$(( (current_option + 1) % num_options )); fi
                 ;;
             *)
+                # Before calling a handler that might draw outside the scroll region,
+                # reset scrolling and move the cursor to a predictable spot (bottom of screen).
+                {
+                    printf '\033[r' # Reset scroll region
+                    local footer_start_line=$(( term_lines - bottom_fixed_lines + 1 ))
+                    printf '\033[%s;1H\033[J' "$footer_start_line" # Move to footer start and clear down
+                } >/dev/tty
+
                 # Not a standard navigation key, delegate to the view-specific handler
                 local selected_payload=""
                 if (( num_options > 0 )); then selected_payload="${data_payloads[$current_option]}"; fi
                 "$key_handler_func" "$key" "$selected_payload" "$current_option" current_option "$num_options" handler_result
+
+                # If the handler did nothing (e.g., an unhandled key), the result is "noop".
+                # But we've already destroyed the scroll region by printing `\033[r`, so a
+                # simple "noop" redraw is not enough. We must upgrade it to a full refresh
+                # to restore the view's structure.
+                if [[ "$handler_result" == "noop" ]]; then
+                    handler_result="refresh"
+                fi
                 ;;
         esac
 
@@ -597,15 +619,14 @@ _interactive_list_view() {
         elif [[ "$handler_result" == "refresh" ]]; then
             _refresh_data
             _draw_full_view
-            lines_below_list=$(( footer_lines + 2 ))
-            move_cursor_up "$lines_below_list"
         elif [[ "$handler_result" == "partial_redraw" ]]; then
-            # The handler already did the drawing and cursor positioning.
-            # Do nothing and loop back to `read_single_char`.
-            :
+            # A partial redraw (like footer toggle) is now complex enough
+            # that a full redraw is simpler and acceptably fast.
+            _draw_full_view
         else # "noop" (and default for up/down keys)
-            # Redraw just the list.
-            move_cursor_up "$list_lines"
+            # For a simple redraw, we must reposition the cursor to the top of the
+            # scroll region before drawing the list.
+            printf '\033[%s;1H' "$((top_fixed_lines + 1))" >/dev/tty
             _draw_list
         fi
     done
@@ -1543,8 +1564,6 @@ _prompt_for_identity_file_interactive() {
 
 # Prompts user for details and adds a new host to the SSH config from scratch.
 add_ssh_host_from_scratch() {
-    printBanner "Add New SSH Host"
-
     # --- Create from scratch logic ---
     local initial_alias="" initial_hostname="" initial_user="$USER" initial_port="22" initial_identityfile=""
     local new_alias="$initial_alias" new_hostname="$initial_hostname" new_user="$initial_user" new_port="$initial_port" new_identityfile="$initial_identityfile"
@@ -1580,8 +1599,6 @@ add_ssh_host_from_scratch() {
 # Prompts user for details and adds a new host to the SSH config.
 # This version is for the command-line flag and presents the initial choice.
 add_ssh_host() {
-    printBanner "Add New SSH Host"
-
     # --- Step 1: Choose to create from scratch or clone ---
     local -a add_options=("Create a new host from scratch" "Clone settings from an existing host")
     local add_choice_idx
@@ -1885,6 +1902,7 @@ edit_ssh_host_in_editor() {
 clone_ssh_host() {
     local host_to_clone="$1"
     if [[ -z "$host_to_clone" ]]; then
+        clear
         printBanner "Clone SSH Host"
         host_to_clone=$(select_ssh_host "Select a host to clone:")
         [[ $? -ne 0 ]] && return # select_ssh_host prints messages
@@ -2539,16 +2557,18 @@ _format_saved_port_forward_line() {
 
 _port_forward_view_draw_header() {
     local header1 header2
-    header1=$(printf "   %-20s %-45s" "HOST" "FORWARD")
+    header1=$(printf "   %-20s %s" "HOST" "FORWARD")
     # The second header line is indented to match the item's second line.
-    header2=$(printf "   %-3s %-8s %-7s %-45s" "[ ]" "PID" "TYPE" "DESCRIPTION")
-    printMsg "${C_WHITE}${header1}${T_RESET}"
-    printMsg "${C_WHITE}${header2}${T_RESET}"
+    header2=$(printf "   %-3s %-8s %-7s %s" "[ ]" "PID" "TYPE" "DESCRIPTION")
+    # This function's output is captured, so it should not add a trailing newline.
+    printf '%s\n%s' "${C_WHITE}${header1}${T_RESET}" "${C_WHITE}${header2}${T_RESET}"
 }
 
 _port_forward_view_draw_footer() {
-    printMsg "  ${T_BOLD}Actions:${T_RESET}      ${C_L_GREEN}(A)dd${T_RESET} | ${C_L_RED}(D)elete${T_RESET} | ${C_L_CYAN}(E)dit${T_RESET} | ${C_L_BLUE}(C)lone${T_RESET} | ${C_L_GREEN}ENTER${T_RESET} Start/Stop"
-    printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/j${T_RESET} Move Down | ${C_L_CYAN}↑/k${T_RESET} Move up${T_RESET}               │ ${C_L_YELLOW}Q/ESC${T_RESET} Back"
+    local line1="  ${T_BOLD}Actions:${T_RESET}      ${C_L_GREEN}(A)dd${T_RESET} | ${C_L_RED}(D)elete${T_RESET} | ${C_L_CYAN}(E)dit${T_RESET} | ${C_L_BLUE}(C)lone${T_RESET} | ${C_L_GREEN}ENTER${T_RESET} Start/Stop"
+    local line2="  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/j${T_RESET} Move Down | ${C_L_CYAN}↑/k${T_RESET} Move up${T_RESET}               │ ${C_L_YELLOW}Q/ESC${T_RESET} Back"
+    # This function's output is captured, so it should not add a trailing newline.
+    printf '%s\n%s' "$line1" "$line2"
 }
 
 _port_forward_view_refresh() {
@@ -2586,10 +2606,7 @@ _port_forward_view_key_handler() {
         'd'|'D')
             if [[ -n "$selected_payload" ]]; then
                 # Move cursor down past the list and its top divider.
-                _clear_list_view_footer "_port_forward_view_draw_footer"
-                # Show the prompt in the cleared footer area.
-                printBanner "${C_RED}Delete / Remove Port Forward${T_RESET}"
-                if prompt_yes_no "Permanently ${C_RED}delete${T_RESET} saved forward\n     '${spec}' on '${host}'?" "n"; then
+                if prompt_yes_no "Permanently ${C_RED}delete${T_RESET} saved forward: '${spec}' on '${host}'?" "n"; then
                     local -a all_types all_specs all_hosts all_descs; _get_saved_port_forwards all_types all_specs all_hosts all_descs
                     local -a new_types new_specs new_hosts new_descs
                     for i in "${!all_types[@]}"; do
@@ -2604,7 +2621,6 @@ _port_forward_view_key_handler() {
         "$KEY_ENTER")
             if [[ -n "$selected_payload" ]]; then
                 # Move cursor down past the list and its top divider.
-                _clear_list_view_footer "_port_forward_view_draw_footer"
                 if [[ -n "$pid" ]]; then
                     # Action: Deactivate
                     if prompt_yes_no "Stop port forward\n     ${spec} on ${host}?" "y"; then
@@ -2671,23 +2687,26 @@ run_menu_action() {
 
 # (Private) A shared function to draw a standardized header for host list views.
 _common_host_view_draw_header() {
-    local header; header=$(printf "   %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "user@hostname[:port] (key)")
-    printMsg "${C_WHITE}${header}${T_RESET}"
+    # This function's output is captured, so it should not add a trailing newline.
+    printf '%s' "   ${C_WHITE}HOST ALIAS           user@hostname[:port] (key)${T_RESET}"
 }
 
 _host_centric_view_draw_footer() {
+    local output=""
     # This function now depends on _HOST_VIEW_FOOTER_EXPANDED being set in its calling scope.
     if [[ "${_HOST_VIEW_FOOTER_EXPANDED:-0}" -eq 1 ]]; then
-        printMsg "  ${T_BOLD}Host Actions:${T_RESET} ${C_L_GREEN}(A)dd${T_RESET} | ${C_L_RED}(D)elete${T_RESET} | ${C_L_BLUE}(C)lone${T_RESET}           │ ${C_BLUE}? fewer options${T_RESET}"
-        printMsg "  ${T_BOLD}Host Edit:${T_RESET}    ${C_L_CYAN}(E)dit${T_RESET} host details                  │ ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET}"
-        printMsg "  ${T_BOLD}Manage:${T_RESET}       SSH ${C_MAGENTA}(K)eys${T_RESET} | ${C_L_CYAN}(P)ort${T_RESET} Forwards"
-        printMsg "                ${C_L_BLUE}(O)pen${T_RESET} ssh config in editor"
-        printMsg "  ${T_BOLD}Connection:${T_RESET}   ${C_L_YELLOW}ENTER${T_RESET} Connect | (${C_L_CYAN}t${T_RESET})est selected | (${C_L_CYAN}T${T_RESET})est all"
-        printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/j${T_RESET} Move Down | ${C_L_CYAN}↑/k${T_RESET} Move up${T_RESET}"
+        output+="  ${T_BOLD}Host Actions:${T_RESET} ${C_L_GREEN}(A)dd${T_RESET} | ${C_L_RED}(D)elete${T_RESET} | ${C_L_BLUE}(C)lone${T_RESET}           │ ${C_BLUE}? fewer options${T_RESET}\n"
+        output+="  ${T_BOLD}Host Edit:${T_RESET}    ${C_L_CYAN}(E)dit${T_RESET} host details                  │ ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET}\n"
+        output+="  ${T_BOLD}Manage:${T_RESET}       SSH ${C_MAGENTA}(K)eys${T_RESET} | ${C_L_CYAN}(P)ort${T_RESET} Forwards\n"
+        output+="                ${C_L_BLUE}(O)pen${T_RESET} ssh config in editor\n"
+        output+="  ${T_BOLD}Connection:${T_RESET}   ${C_L_YELLOW}ENTER${T_RESET} Connect | (${C_L_CYAN}t${T_RESET})est selected | (${C_L_CYAN}T${T_RESET})est all\n"
+        output+="  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/j${T_RESET} Move Down | ${C_L_CYAN}↑/k${T_RESET} Move up${T_RESET}"
     else
-        printMsg "  ${T_BOLD}Host Actions:${T_RESET} ${C_L_GREEN}(A)dd${T_RESET} | ${C_L_RED}(D)elete${T_RESET} | ${C_L_BLUE}(C)lone${T_RESET}           │ ${C_BLUE}? more options${T_RESET}"
-        printMsg "  ${T_BOLD}Host Edit:${T_RESET}    ${C_L_CYAN}(E)dit${T_RESET} host details                  │ ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET}"
+        output+="  ${T_BOLD}Host Actions:${T_RESET} ${C_L_GREEN}(A)dd${T_RESET} | ${C_L_RED}(D)elete${T_RESET} | ${C_L_BLUE}(C)lone${T_RESET}           │ ${C_BLUE}? more options${T_RESET}\n"
+        output+="  ${T_BOLD}Host Edit:${T_RESET}    ${C_L_CYAN}(E)dit${T_RESET} host details                  │ ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET}"
     fi
+    # This function's output is captured, so it should not add a trailing newline.
+    printf '%b' "$output"
 }
 
 # (Private) A shared function to refresh the data for host list views.
@@ -2717,10 +2736,8 @@ _host_centric_view_key_handler() {
             ;;
         "$KEY_ENTER")
             if [[ -n "$selected_host" ]]; then
-                # The cursor is at the end of the list content.
-                _clear_list_view_footer "_host_centric_view_draw_footer"
-                # The cursor is now at the start of where the footer text was.
-                # Show the prompt here.
+                # The key handler is called after resetting the scroll region.
+                # We can draw the prompt at the bottom of the screen.
                 if prompt_yes_no "Connect to '${selected_host}'?" "y"; then
                     clear; exec ssh "$selected_host"
                 else
@@ -2731,30 +2748,13 @@ _host_centric_view_key_handler() {
             fi
             ;;
         'a'|'A')
-            # Move cursor down past the list and its top divider.
-            _clear_list_view_footer "_host_centric_view_draw_footer"
-            # Show the prompt in the cleared footer area.
-            printBanner "${C_GREEN}Add New SSH Host${T_RESET}"
-            local -a add_options=("Create a new host from scratch" "Clone settings from an existing host")
-            local add_choice_idx
-            add_choice_idx=$(interactive_menu "single" "How would you like to add the new host?" "" "${add_options[@]}")
-
-            if [[ $? -eq 0 ]]; then
-                if [[ "${add_options[$add_choice_idx]}" == "Clone settings from an existing host" ]]; then
-                    run_menu_action "clone_ssh_host"
-                else
-                    run_menu_action "add_ssh_host_from_scratch"
-                fi
-            fi
+            # Delegate to the main 'add' function, which handles the full-screen UI.
+            run_menu_action "add_ssh_host"
             out_result="refresh"
             ;;
         'e'|'E') if [[ -n "$selected_host" ]]; then run_menu_action "edit_ssh_host" "$selected_host"; out_result="refresh"; fi ;;
         'd'|'D')
             if [[ -n "$selected_host" ]]; then
-                # Move cursor down past the list and its top divider.
-                _clear_list_view_footer "_host_centric_view_draw_footer"
-                # Show the prompt in the cleared footer area.
-                printBanner "${C_RED}Delete / Remove Host${T_RESET}"
                 if prompt_yes_no "Are you sure you want to ${C_RED}remove${T_RESET} '${selected_host}'?\n    This will permanently delete the host from your config." "n"; then
                     # User confirmed deletion.
                     # Get the IdentityFile path *before* removing the host from the config.
@@ -2832,14 +2832,16 @@ interactive_key_management_view() {
 # --- Key Management View Helpers ---
 
 _key_view_draw_header() {
-    local header; header=$(printf "%-25s %-10s %-6s %-23s" "KEY FILENAME" "TYPE" "BITS" "COMMENT")
-    printMsg "   ${C_WHITE}${header}${T_RESET}"
+    # This function's output is captured, so it should not add a trailing newline.
+    printf '%s' "   ${C_WHITE}KEY FILENAME              TYPE       BITS   COMMENT                ${T_RESET}"
 }
 
 _key_view_draw_footer() {
-    printMsg "  ${T_BOLD}Key Actions:${T_RESET}  ${C_L_GREEN}(A)dd${T_RESET} | ${C_L_RED}(D)elete${T_RESET} | ${C_L_CYAN}(R)ename${T_RESET}               │ ${C_L_YELLOW}Q/ESC${T_RESET} Back"
-    printMsg "                ${C_L_BLUE}(C)opy${T_RESET} to server | ${C_L_CYAN}(V)iew${T_RESET} public | Re-gen ${C_L_CYAN}(P)ublic${T_RESET}"
-    printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/j${T_RESET} Move Down | ${C_L_CYAN}↑/k${T_RESET} Move up${T_RESET}"
+    local line1="  ${T_BOLD}Key Actions:${T_RESET}  ${C_L_GREEN}(A)dd${T_RESET} | ${C_L_RED}(D)elete${T_RESET} | ${C_L_CYAN}(R)ename${T_RESET}               │ ${C_L_YELLOW}Q/ESC${T_RESET} Back"
+    local line2="                ${C_L_BLUE}(C)opy${T_RESET} to server | ${C_L_CYAN}(V)iew${T_RESET} public | Re-gen ${C_L_CYAN}(P)ublic${T_RESET}"
+    local line3="  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/j${T_RESET} Move Down | ${C_L_CYAN}↑/k${T_RESET} Move up${T_RESET}"
+    # This function's output is captured, so it should not add a trailing newline.
+    printf '%s\n%s\n%s' "$line1" "$line2" "$line3"
 }
 
 # (Private) Verifies a file is a valid private key and extracts its details.
@@ -2894,9 +2896,6 @@ _key_view_key_handler() {
     out_result="noop"
     case "$key" in
         'a'|'A')
-            # Move cursor down past the list and its bottom divider.
-            _clear_list_view_footer "_key_view_draw_footer"
-            # Show the prompt in the cleared footer area.
             printBanner "${C_GREEN}Add New SSH Key${T_RESET}"
             local -a key_types=("ed25519 (recommended)" "rsa (legacy, 4096 bits)")
             local selected_index
@@ -2920,12 +2919,9 @@ _key_view_key_handler() {
             fi ;;
         'd'|'D')
             if [[ -n "$selected_key_path" ]]; then
-                # Move cursor down past the list and its bottom divider.
-                _clear_list_view_footer "_key_view_draw_footer"
                 # Build the multi-line question for the prompt.
-                local pub_key_path="${selected_key_path}.pub"
-                printBanner "${C_RED}Delete Key${T_RESET}"
                 local question="Are you sure you want to permanently delete this key pair?\n     Private: ${selected_key_path/#$HOME/\~}"
+                local pub_key_path="${selected_key_path}.pub"
                 if [[ -f "$pub_key_path" ]]; then question+="\n     Public:  ${pub_key_path/#$HOME/\~}"; fi
 
                 # Show the prompt in the cleared footer area.
