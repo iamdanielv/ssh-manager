@@ -388,7 +388,13 @@ _prompt_for_valid_port() {
             if [[ "$allow_empty" == "true" ]]; then
                 err_msg="Invalid port. Please enter a number between 1-65535, or leave blank for default (22)."
             fi
-            printErrMsg "$err_msg"; sleep 2; clear_lines_up 1
+            # Save cursor, print error, wait, then restore and clear.
+            # This robustly handles multi-line error messages from terminal wrapping.
+            printf '\033[s' >/dev/tty
+            printErrMsg "$err_msg"
+            sleep 2
+            printf '\033[u\033[J' >/dev/tty
+            clear_lines_up 1 # Clear the previous input line
             # The loop will continue, and prompt_for_input will use the invalid value as the new default.
         fi
     done
