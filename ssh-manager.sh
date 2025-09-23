@@ -100,6 +100,15 @@ strip_ansi_codes() {
     local s="$1"
     # The C-style escape sequence for ESC
     local esc=$'\033'
+
+    # Optimization: if the string doesn't contain an escape character,
+    # it can't have ANSI codes, so we can return it as-is. This avoids
+    # the overhead of the regex matching loop for plain strings.
+    if [[ "$s" != *"$esc"* ]]; then
+        echo -n "$s"
+        return
+    fi
+
     # The regex pattern to match ANSI escape codes. It must be unquoted for the =~ operator.
     local pattern="$esc\\[[0-9;]*[a-zA-Z]"
     # Loop to find and remove all occurrences of the pattern.
