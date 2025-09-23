@@ -2061,6 +2061,24 @@ _inline_connect_to_host() {
     fi
 }
 
+# (Private) Handles inline connection test to a host from a list view.
+# Clears the footer, runs the test, and displays results.
+# This is intended to be called from a key handler to provide an "in-place" action.
+# Usage: _inline_test_connection <host_to_test> <footer_draw_func>
+_inline_test_connection() {
+    local host_to_test="$1"
+    local footer_draw_func="$2"
+
+    # Move cursor down past the list and its top divider.
+    _clear_list_view_footer "$footer_draw_func"
+    # Show the banner in the cleared footer area.
+    printBanner "Test SSH Connection"
+    # Run the test. Its output will appear below the banner.
+    _test_connection_for_host "$host_to_test"
+    # Give the user a moment to see the result before the screen refreshes.
+    sleep 2
+}
+
 # Tests the SSH connection to a selected server.
 test_ssh_connection() {
     printBanner "Test SSH Connection"
@@ -2744,8 +2762,8 @@ _host_centric_view_key_handler() {
         'c'|'C') if [[ -n "$selected_host" ]]; then run_menu_action "clone_ssh_host" "$selected_host"; out_result="refresh"; fi ;;
         't')
             if [[ -n "$selected_host" ]]; then
-                clear; printBanner "Test SSH Connection"; _test_connection_for_host "$selected_host"; prompt_to_continue
-                out_result="refresh" # Trigger a full redraw to restore the view.
+                _inline_test_connection "$selected_host" "_host_centric_view_draw_footer"
+                out_result="refresh"
             fi
             ;;
         'T')
