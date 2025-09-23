@@ -277,8 +277,7 @@ prompt_yes_no() {
                 ;;
             "$KEY_ESC"|"q")
                 _clear_all_prompt_content
-                printMsg " ${C_L_YELLOW}-- cancelled --${T_RESET}" >/dev/tty
-                sleep 1
+                show_timed_message " ${C_L_YELLOW}-- cancelled --${T_RESET}" 1
                 return 2 # Cancelled
                 ;;
             *)
@@ -1752,8 +1751,7 @@ _interactive_editor_loop() {
                 local question="Discard all pending changes?"
                 if [[ "$mode" == "add" || "$mode" == "clone" ]]; then question="Discard all changes and reset fields?"; fi
                 if prompt_yes_no "$question" "y"; then
-                    "$reset_func"
-                    printInfoMsg "Changes discarded."; sleep 1
+                    "$reset_func"; show_timed_message "${T_INFO_ICON} Changes discarded."
                 fi
                 ;;
             's'|'S') return 0 ;; # Signal to Save
@@ -1762,12 +1760,12 @@ _interactive_editor_loop() {
                 if "$change_checker_func"; then
                     clear_current_line
                     if prompt_yes_no "You have unsaved changes. Quit without saving?" "n"; then
-                        printInfoMsg "Operation cancelled."; sleep 1; return 1
+                        show_timed_message "${T_INFO_ICON} Operation cancelled."; return 1
                     fi
                 else
                     # No changes, just quit. Provide feedback and a small delay.
                     clear_current_line
-                    printInfoMsg "Operation cancelled. No changes were made."; sleep 1
+                    show_timed_message "${T_INFO_ICON} Operation cancelled. No changes were made."
                     return 1
                 fi
                 ;;
