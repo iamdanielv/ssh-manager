@@ -78,6 +78,24 @@ backup_ssh_config() {
     else printErrMsg "Failed to create backup."; fi
 }
 
+# (Private) Handles inline backup of the SSH config from a list view.
+# Clears the footer, prints a banner, and runs the backup process.
+# This is intended to be called from a key handler to provide an "in-place" action.
+# Usage: _inline_backup_ssh_config <footer_draw_func>
+_inline_backup_ssh_config() {
+    local footer_draw_func="$1"
+    {
+        _clear_list_view_footer "$footer_draw_func"
+        printMsgNoNewline "${T_CURSOR_SHOW}"
+        printBanner "Backup SSH Config"
+
+        backup_ssh_config
+
+        printMsgNoNewline "${T_CURSOR_HIDE}"
+        sleep 1 # Wait a moment for the user to see the result before redrawing.
+    } >/dev/tty
+}
+
 # Allows advanced editing of a host's config block directly in $EDITOR.
 edit_ssh_host_in_editor() {
     printBanner "Edit Host Block in Editor"
@@ -191,18 +209,8 @@ _advanced_host_view_key_handler() {
             out_result="refresh"
             ;;
         'b'|'B')
-            {
-                _clear_list_view_footer "_advanced_host_view_draw_footer"
-                printMsgNoNewline "${T_CURSOR_SHOW}"
-                printBanner "Backup SSH Config"
-
-                backup_ssh_config
-
-                printMsgNoNewline "${T_CURSOR_HIDE}"
-                # Wait a moment for the user to see the result before redrawing.
-                sleep 1
-            } >/dev/tty
-            out_result="refresh" # Redraw the view
+            _inline_backup_ssh_config "_advanced_host_view_draw_footer"
+            out_result="refresh"
             ;;
         'x'|'X')
             run_menu_action "export_ssh_hosts"
