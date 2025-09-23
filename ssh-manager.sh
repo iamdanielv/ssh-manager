@@ -2338,6 +2338,40 @@ _inline_remove_port_forward() {
     fi
 }
 
+# (Private) Handles inline activation/deactivation of a port forward.
+# Clears the footer, prompts if needed, and starts/stops the ssh process.
+# Usage: _inline_toggle_port_forward <payload> <footer_draw_func>
+_inline_toggle_port_forward() {
+    local payload="$1"
+    local footer_draw_func="$2"
+    local idx type spec host desc pid
+    IFS='|' read -r idx type spec host desc pid <<< "$payload"
+
+    # Move cursor down past the list and its top divider.
+    _clear_list_view_footer "$footer_draw_func"
+
+    if [[ -n "$pid" ]]; then
+        # Action: Deactivate
+        if prompt_yes_no "Stop port forward\n     ${spec} on ${host}?" "y"; then
+            if run_with_spinner "Stopping port forward (PID: ${pid})..." kill "$pid"; then
+                printOkMsg "Port forward stopped."
+            else
+                printErrMsg "Failed to stop port forward process."
+            fi
+            sleep 1
+        fi
+    else
+        # Action: Activate
+        local flag; if [[ "$type" == "Local" ]]; then flag="-L"; else flag="-R"; fi
+        if run_with_spinner "Establishing port forward: ${spec}..." ssh -o ExitOnForwardFailure=yes -N -f "${flag}" "${spec}" "${host}"; then
+            printOkMsg "Port forward activated in the background."
+        else
+            printErrMsg "Failed to activate port forward."
+        fi
+        sleep 1
+    fi
+}
+
 # Deletes a saved port forward configuration.
 # This function only performs the file modification; it does not prompt the user.
 delete_saved_port_forward() {
@@ -2572,28 +2606,7 @@ _port_forward_view_key_handler() {
         'c'|'C') if [[ -n "$selected_payload" ]]; then run_menu_action "clone_saved_port_forward" "$type" "$spec" "$host" "$desc"; out_result="refresh"; fi ;;
         "$KEY_ENTER")
             if [[ -n "$selected_payload" ]]; then
-                # Move cursor down past the list and its top divider.
-                _clear_list_view_footer "_port_forward_view_draw_footer"
-                if [[ -n "$pid" ]]; then
-                    # Action: Deactivate
-                    if prompt_yes_no "Stop port forward\n     ${spec} on ${host}?" "y"; then
-                        if run_with_spinner "Stopping port forward (PID: ${pid})..." kill "$pid"; then
-                            printOkMsg "Port forward stopped."
-                        else
-                            printErrMsg "Failed to stop port forward process."
-                        fi
-                        sleep 1
-                    fi
-                else
-                    # Action: Activate
-                    local flag; if [[ "$type" == "Local" ]]; then flag="-L"; else flag="-R"; fi
-                    if run_with_spinner "Establishing port forward: ${spec}..." ssh -o ExitOnForwardFailure=yes -N -f "${flag}" "${spec}" "${host}"; then
-                        printOkMsg "Port forward activated in the background."
-                    else
-                        printErrMsg "Failed to activate port forward."
-                    fi
-                    sleep 1
-                fi
+                _inline_toggle_port_forward "$selected_payload" "_port_forward_view_draw_footer"
                 out_result="refresh"
             fi ;;
         "$KEY_ESC"|"q"|"Q") out_result="exit" ;; # Exit view
