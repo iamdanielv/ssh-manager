@@ -303,6 +303,23 @@ prompt_to_continue() {
     clear_lines_up 1
 }
 
+# Prints a message for a fixed duration, then clears it. Does not wait for user input.
+# Useful for brief status updates that don't require user acknowledgement.
+# Usage: show_timed_message "My message" [duration]
+show_timed_message() {
+    local message="$1"
+    local duration="${2:-1.5}"
+
+    # Calculate how many lines the message will take up to clear it correctly.
+    # This is important for multi-line messages (e.g., from terminal wrapping).
+    local message_lines; message_lines=$(echo -e "$message" | wc -l)
+
+    printMsg "$message" >/dev/tty
+    sleep "$duration"
+    # Also redirect to /dev/tty to ensure it works when stdout is captured.
+    clear_lines_up "$message_lines" >/dev/tty
+}
+
 # (Private) Clears the footer area of an interactive list view.
 # The cursor is expected to be at the end of the list content (before the divider).
 # The function leaves the cursor at the start of the now-cleared footer area.
@@ -3074,7 +3091,7 @@ main() {
     fi
 
     # Default interactive mode (no flags)
-    _setup_environment "ssh" "ssh-keygen" "ssh-copy-id" "awk" "cat" "grep" "rm" "mktemp" "cp" "date" "tput"
+    _setup_environment "ssh" "ssh-keygen" "ssh-copy-id" "awk" "cat" "grep" "rm" "mktemp" "cp" "date" "tput" "wc"
 
     main_loop
 }
