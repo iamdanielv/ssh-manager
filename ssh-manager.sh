@@ -1420,49 +1420,63 @@ _prompt_for_unique_host_alias() {
 
 # --- Host Editor Feature (Private Helpers) ---
 
+# (Private) Formats a line for an interactive editor, showing a change indicator if needed.
+# Assumes 'mode' variable is set in the calling scope.
+# Usage: _editor_format_line <key> <label> <new_val> <original_val> [is_path] [is_clone_alias]
+_editor_format_line() {
+    local key="$1" label="$2" new_val="$3" original_val="$4"
+    local is_path="${5:-false}"
+    local is_clone_alias="${6:-false}"
+
+    local display_val="${new_val}"
+    if [[ "$is_path" == "true" ]]; then
+        display_val="${new_val/#$HOME/\~}"
+    fi
+    if [[ -z "$display_val" ]]; then
+        display_val="${C_GRAY}(not set)${T_RESET}"
+    else
+        display_val="${C_L_CYAN}${display_val}${T_RESET}"
+    fi
+
+    local change_indicator=" "
+    # In 'add' mode, there are no "changes" from an original, so no indicator.
+    if [[ "$mode" != "add" ]]; then
+        local val1="$new_val"
+        local val2="$original_val"
+        if [[ "$is_path" == "true" ]]; then
+            val1="${new_val/#\~/$HOME}"
+            val2="${original_val/#\~/$HOME}"
+        fi
+        if [[ "$val1" != "$val2" ]]; then
+            change_indicator="${C_L_YELLOW}*${T_RESET}"
+        fi
+    fi
+
+    # For clone mode, the alias is always considered a change.
+    if [[ "$mode" == "clone" && "$is_clone_alias" == "true" ]]; then
+        change_indicator="${C_L_YELLOW}*${T_RESET}"
+    fi
+
+    printf "  ${C_L_WHITE}%s)${T_RESET} %b %-15s: %b\n" "$key" "$change_indicator" "$label" "$display_val"
+}
+
 # (Private) Draws the UI for the interactive host editor.
 # It assumes all 'new_*' and 'original_*' variables are set in the calling scope.
 # It also expects 'mode' to be set.
 _host_editor_draw_ui() {
-    # Helper to format a line, adding a change indicator (*) if needed.
-    _format_line() {
-        local key="$1" label="$2" new_val="$3" original_val="$4" is_alias="${5:-false}"
-
-        local display_val="${new_val}"; if [[ "$label" == "IdentityFile" ]]; then display_val="${new_val/#$HOME/\~}"; fi
-        if [[ -z "$display_val" ]]; then display_val="${C_GRAY}(not set)${T_RESET}"; else display_val="${C_L_CYAN}${display_val}${T_RESET}"; fi
-
-        local change_indicator=" "
-        # In 'add' mode, there are no "changes" from an original, so no indicator.
-        if [[ "$mode" != "add" ]]; then
-            if [[ "$is_alias" == "true" ]]; then
-                if [[ "$new_val" != "$original_val" ]]; then change_indicator="${C_L_YELLOW}*${T_RESET}"; fi
-            else
-                local expanded_new_val="${new_val/#\~/$HOME}"
-                if [[ "$expanded_new_val" != "${original_val/#\~/$HOME}" ]]; then change_indicator="${C_L_YELLOW}*${T_RESET}"; fi
-            fi
-        fi
-
-        # For clone mode, the alias is always considered a change.
-        if [[ "$mode" == "clone" && "$label" == "Host (Alias)" ]]; then change_indicator="${C_L_YELLOW}*${T_RESET}"; fi
-
-        printf "  ${C_L_WHITE}%s)${T_RESET} %b %-15s: %b\n" "$key" "$change_indicator" "$label" "$display_val"
-    }
-
     local title="Configure the host details:"
     if [[ "$mode" == "add" ]]; then title="Configure the new host:"; fi
     if [[ "$mode" == "clone" ]]; then title="Configure the new cloned host:"; fi
     printMsg "$title"
 
-    _format_line "1" "Host (Alias)" "$new_alias" "$original_alias" "true"
-    _format_line "2" "HostName"     "$new_hostname" "$original_hostname"
-    _format_line "3" "User"         "$new_user" "$original_user"
-    _format_line "4" "Port"         "$new_port" "$original_port"
-    _format_line "5" "IdentityFile" "$new_identityfile" "$original_identityfile"
+    _editor_format_line "1" "Host (Alias)" "$new_alias" "$original_alias" "false" "true"
+    _editor_format_line "2" "HostName"     "$new_hostname" "$original_hostname"
+    _editor_format_line "3" "User"         "$new_user" "$original_user"
+    _editor_format_line "4" "Port"         "$new_port" "$original_port"
+    _editor_format_line "5" "IdentityFile" "$new_identityfile" "$original_identityfile" "true"
 
     echo
-    local discard_text="iscard all pending changes"
-    if [[ "$mode" == "add" ]]; then discard_text="eset fields"; fi
-    printMsg "  ${C_L_WHITE}c) ${C_L_YELLOW}(C)ancel/(D)${discard_text}${T_RESET}"
+    printMsg "  ${C_L_WHITE}c) ${C_L_YELLOW}(C)ancel/(D)iscard${T_RESET} all pending changes"
     printMsg "  ${C_L_WHITE}s) ${C_L_GREEN}(S)ave${T_RESET} and Quit"
     printMsg "  ${C_L_WHITE}q) ${C_L_YELLOW}(Q)uit${T_RESET} without saving (or press ${C_L_YELLOW}ESC${T_RESET})"
     echo
@@ -2099,32 +2113,18 @@ _save_all_port_forwards() {
 # It assumes all 'new_*' and 'original_*' variables are set in the calling scope.
 # It also expects 'mode' to be set.
 _port_forward_editor_draw_ui() {
-    # Helper to format a line, adding a change indicator (*) if needed.
-    _format_line() {
-        local key="$1" label="$2" new_val="$3" original_val="$4"
-
-        local display_val="${new_val}"; if [[ -z "$display_val" ]]; then display_val="${C_GRAY}(not set)${T_RESET}"; else display_val="${C_L_CYAN}${display_val}${T_RESET}"; fi
-
-        local change_indicator=" "
-        if [[ "$mode" != "add" ]]; then
-            if [[ "$new_val" != "$original_val" ]]; then change_indicator="${C_L_YELLOW}*${T_RESET}"; fi
-        fi
-
-        printf "  ${C_L_WHITE}%s)${T_RESET} %b %-15s: %b\n" "$key" "$change_indicator" "$label" "$display_val"
-    }
-
     local p1_label="Local Port" h_label="Remote Host" p2_label="Remote Port"
     if [[ "$new_type" == "Remote" ]]; then
         p1_label="Remote Port" h_label="Local Host" p2_label="Local Port"
     fi
 
     printMsg "Choose an option to configure:"
-    _format_line "1" "Type" "$new_type" "$original_type"
-    _format_line "2" "SSH Host" "$new_host" "$original_host"
-    _format_line "3" "${p1_label}" "$new_p1" "$original_p1"
-    _format_line "4" "${h_label}" "$new_h" "$original_h"
-    _format_line "5" "${p2_label}" "$new_p2" "$original_p2"
-    _format_line "6" "Description" "$new_desc" "$original_desc"
+    _editor_format_line "1" "Type" "$new_type" "$original_type"
+    _editor_format_line "2" "SSH Host" "$new_host" "$original_host"
+    _editor_format_line "3" "${p1_label}" "$new_p1" "$original_p1"
+    _editor_format_line "4" "${h_label}" "$new_h" "$original_h"
+    _editor_format_line "5" "${p2_label}" "$new_p2" "$original_p2"
+    _editor_format_line "6" "Description" "$new_desc" "$original_desc"
 
     echo
     printMsg "  ${C_L_WHITE}c) ${C_L_YELLOW}(C)ancel/(D)iscard${T_RESET} all pending changes"
@@ -2206,9 +2206,7 @@ add_saved_port_forward() {
     if ! _interactive_editor_loop "add" "$banner_text" \
         "_port_forward_editor_draw_ui" "_port_forward_editor_field_handler" \
         "_port_forward_editor_has_changes" "_port_forward_editor_reset_fields"; then
-        clear_current_line
-        printInfoMsg "Add cancelled. No changes were saved."; sleep 1
-        return
+        return 2 # User cancelled, signal to run_menu_action to not prompt.
     fi
 
     # --- Save Logic ---
@@ -2244,9 +2242,7 @@ edit_saved_port_forward() {
     if ! _interactive_editor_loop "edit" "$banner_text" \
         "_port_forward_editor_draw_ui" "_port_forward_editor_field_handler" \
         "_port_forward_editor_has_changes" "_port_forward_editor_reset_fields"; then
-        clear_current_line
-        printInfoMsg "Edit cancelled. No changes were saved."; sleep 1
-        return
+        return 2 # User cancelled, signal to run_menu_action to not prompt.
     fi
 
     local new_spec="${new_p1}:${new_h}:${new_p2}"
@@ -2292,9 +2288,7 @@ clone_saved_port_forward() {
     if ! _interactive_editor_loop "clone" "$banner_text" \
         "_port_forward_editor_draw_ui" "_port_forward_editor_field_handler" \
         "_port_forward_editor_has_changes" "_port_forward_editor_reset_fields"; then
-        clear_current_line
-        printInfoMsg "Clone cancelled. No changes were saved."; sleep 1
-        return
+        return 2 # User cancelled, signal to run_menu_action to not prompt.
     fi
 
     local new_spec="${new_p1}:${new_h}:${new_p2}"
