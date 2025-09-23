@@ -1953,6 +1953,30 @@ _remove_host_and_cleanup() {
     _cleanup_orphaned_key "$identity_file_to_check"
 }
 
+# (Private) Handles inline deletion of a host from a list view.
+# Clears the footer, prompts for confirmation, and performs deletion.
+# This is intended to be called from a key handler to provide an "in-place" action.
+# Usage: _inline_remove_ssh_host <host_to_remove> <footer_draw_func>
+_inline_remove_ssh_host() {
+    local host_to_remove="$1"
+    local footer_draw_func="$2"
+
+    # Move cursor down past the list and its top divider.
+    _clear_list_view_footer "$footer_draw_func"
+    # Show the prompt in the cleared footer area.
+    printBanner "${C_RED}Delete / Remove Host${T_RESET}"
+    prompt_yes_no "Are you sure you want to ${C_RED}remove${T_RESET} '${host_to_remove}'?\n    This will permanently delete the host from your config." "n"
+    local choice=$?
+    if [[ $choice -eq 0 ]]; then
+        # User confirmed deletion.
+        _remove_host_and_cleanup "$host_to_remove"
+        sleep 2 # Give user a moment to see the result.
+    elif [[ $choice -eq 1 ]]; then
+        printInfoMsg "Host '${host_to_remove}' was ${C_YELLOW}not deleted${T_RESET}."
+        sleep 1
+    fi
+}
+
 # Removes a host entry from the SSH config file.
 remove_ssh_host() {
     printBanner "Remove SSH Host"
@@ -2643,21 +2667,7 @@ _host_centric_view_key_handler() {
         'e'|'E') if [[ -n "$selected_host" ]]; then run_menu_action "edit_ssh_host" "$selected_host"; out_result="refresh"; fi ;;
         'd'|'D')
             if [[ -n "$selected_host" ]]; then
-                # Move cursor down past the list and its top divider.
-                _clear_list_view_footer "_host_centric_view_draw_footer"
-                # Show the prompt in the cleared footer area.
-                printBanner "${C_RED}Delete / Remove Host${T_RESET}"
-                prompt_yes_no "Are you sure you want to ${C_RED}remove${T_RESET} '${selected_host}'?\n    This will permanently delete the host from your config." "n"
-                local choice=$?
-                if [[ $choice -eq 0 ]]; then
-                    # User confirmed deletion.
-                    _remove_host_and_cleanup "$selected_host"
-                    sleep 2 # Give user a moment to see the result.
-                elif [[ $choice -eq 1 ]]; then
-                    printInfoMsg "Host '${selected_host}' was ${C_YELLOW}not deleted${T_RESET}."
-                    sleep 1
-                fi
-                # Whether confirmed, cancelled, or 'no', trigger a full redraw to restore the UI.
+                _inline_remove_ssh_host "$selected_host" "_host_centric_view_draw_footer"
                 out_result="refresh"
             fi
             ;;
