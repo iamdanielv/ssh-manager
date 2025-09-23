@@ -2284,6 +2284,32 @@ edit_saved_port_forward() {
     printOkMsg "Saved port forward has been updated."
 }
 
+# (Private) Handles inline deletion of a saved port forward from a list view.
+# Clears the footer, prompts for confirmation, and performs deletion.
+# This is intended to be called from a key handler to provide an "in-place" action.
+# Usage: _inline_remove_port_forward <payload> <footer_draw_func>
+_inline_remove_port_forward() {
+    local payload="$1"
+    local footer_draw_func="$2"
+    local idx type spec host desc pid
+    IFS='|' read -r idx type spec host desc pid <<< "$payload"
+
+    # Move cursor down past the list and its top divider.
+    _clear_list_view_footer "$footer_draw_func"
+    # Show the prompt in the cleared footer area.
+    printBanner "${C_RED}Delete / Remove Port Forward${T_RESET}"
+    prompt_yes_no "Permanently ${C_RED}delete${T_RESET} saved forward\n     '${spec}' on '${host}'?" "n"
+    local choice=$?
+    if [[ $choice -eq 0 ]]; then
+        delete_saved_port_forward "$idx"
+        printOkMsg "${C_RED}Deleted${T_RESET} saved port forward."
+        sleep 1
+    elif [[ $choice -eq 1 ]]; then
+        printInfoMsg "Port forward was ${C_YELLOW}not deleted${T_RESET}."
+        sleep 1
+    fi
+}
+
 # Deletes a saved port forward configuration.
 # This function only performs the file modification; it does not prompt the user.
 delete_saved_port_forward() {
@@ -2512,20 +2538,7 @@ _port_forward_view_key_handler() {
         'e'|'E') if [[ -n "$selected_payload" ]]; then run_menu_action "edit_saved_port_forward" "$idx"; out_result="refresh"; fi ;;
         'd'|'D')
             if [[ -n "$selected_payload" ]]; then
-                # Move cursor down past the list and its top divider.
-                _clear_list_view_footer "_port_forward_view_draw_footer"
-                # Show the prompt in the cleared footer area.
-                printBanner "${C_RED}Delete / Remove Port Forward${T_RESET}"
-                prompt_yes_no "Permanently ${C_RED}delete${T_RESET} saved forward\n     '${spec}' on '${host}'?" "n"
-                local choice=$?
-                if [[ $choice -eq 0 ]]; then
-                    delete_saved_port_forward "$idx"
-                    printOkMsg "${C_RED}Deleted${T_RESET} saved port forward."
-                    sleep 1
-                elif [[ $choice -eq 1 ]]; then
-                    printInfoMsg "Port forward was ${C_YELLOW}not deleted${T_RESET}."
-                    sleep 1
-                fi
+                _inline_remove_port_forward "$selected_payload" "_port_forward_view_draw_footer"
                 out_result="refresh"
             fi ;;
         'c'|'C') if [[ -n "$selected_payload" ]]; then run_menu_action "clone_saved_port_forward" "$type" "$spec" "$host" "$desc"; out_result="refresh"; fi ;;
