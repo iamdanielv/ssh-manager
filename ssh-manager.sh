@@ -2174,7 +2174,7 @@ _port_forward_editor_field_handler() {
         '6')
             # Edit Description
             clear_current_line
-            prompt_for_input "Enter a short description" "new_desc" "$new_desc"
+            prompt_for_input "Enter a short description" "new_desc" "$new_desc" "true"
             ;;
         *) return 1 ;; # Unhandled key
     esac
