@@ -1100,6 +1100,34 @@ copy_selected_ssh_key() {
     copy_ssh_id_for_host "$selected_host" "$selected_key"
 }
 
+# (Private) Handles inline deletion of an SSH key pair from a list view.
+# Clears the footer, prompts for confirmation, and performs deletion.
+# This is intended to be called from a key handler to provide an "in-place" action.
+# Usage: _inline_remove_ssh_key <key_base_path> <footer_draw_func>
+_inline_remove_ssh_key() {
+    local key_base_path="$1"
+    local footer_draw_func="$2"
+
+    # Move cursor down past the list and its bottom divider.
+    _clear_list_view_footer "$footer_draw_func"
+    # Build the multi-line question for the prompt.
+    local pub_key_path="${key_base_path}.pub"
+    printBanner "${C_RED}Delete Key${T_RESET}"
+    local question="Are you sure you want to permanently delete this key pair?\n     Private: ${key_base_path/#$HOME/\~}"
+    if [[ -f "$pub_key_path" ]]; then question+="\n     Public:  ${pub_key_path/#$HOME/\~}"; fi
+
+    # Show the prompt in the cleared footer area.
+    prompt_yes_no "$question" "n"
+    local choice=$?
+    if [[ $choice -eq 0 ]]; then
+        run_with_spinner "Deleting key pair..." rm -f "$key_base_path" "$pub_key_path"
+        sleep 1
+    elif [[ $choice -eq 1 ]]; then
+        printInfoMsg "Key pair was ${C_YELLOW}not deleted${T_RESET}."
+        sleep 1
+    fi
+}
+
 # Deletes an SSH key pair (private and public files).
 delete_ssh_key() {
     local key_base_path="$1"
@@ -2818,28 +2846,7 @@ _key_view_key_handler() {
             fi ;;
         'd'|'D')
             if [[ -n "$selected_key_path" ]]; then
-                # Move cursor down past the list and its bottom divider.
-                _clear_list_view_footer "_key_view_draw_footer"
-                # Build the multi-line question for the prompt.
-                local pub_key_path="${selected_key_path}.pub"
-                printBanner "${C_RED}Delete Key${T_RESET}"
-                local question="Are you sure you want to permanently delete this key pair?\n     Private: ${selected_key_path/#$HOME/\~}"
-                if [[ -f "$pub_key_path" ]]; then question+="\n     Public:  ${pub_key_path/#$HOME/\~}"; fi
-
-                # Show the prompt in the cleared footer area.
-                prompt_yes_no "$question" "n"
-                local choice=$?
-                if [[ $choice -eq 0 ]]; then
-                    # User confirmed. Run the deletion with a spinner.
-                    # The spinner will print its own success/error message.
-                    run_with_spinner "Deleting key pair..." rm -f "$selected_key_path" "${selected_key_path}.pub"
-                    # Wait a moment for the user to see the result before redrawing.
-                    sleep 1
-                elif [[ $choice -eq 1 ]]; then
-                    printInfoMsg "Key pair was ${C_YELLOW}not deleted${T_RESET}."
-                    sleep 1
-                fi
-                # Whether confirmed or cancelled, trigger a full refresh to restore the UI.
+                _inline_remove_ssh_key "$selected_key_path" "_key_view_draw_footer"
                 out_result="refresh"
             fi ;;
         'r'|'R')
