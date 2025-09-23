@@ -1458,7 +1458,12 @@ _prompt_for_unique_host_alias() {
 
         # Check if host alias already exists in the main config file.
         if get_ssh_hosts | grep -qFx "$out_alias_var"; then
+            # Save cursor, print error, wait, then restore and clear.
+            printf '\033[s' >/dev/tty
             printErrMsg "Host alias '${out_alias_var}' already exists. Please choose another."
+            sleep 2
+            printf '\033[u\033[J' >/dev/tty
+            clear_lines_up 1 # Clear the previous input line
             # Set the default for the next loop iteration to what the user just typed.
             default_value="$out_alias_var"
         else
