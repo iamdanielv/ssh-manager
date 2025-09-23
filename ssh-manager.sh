@@ -2039,6 +2039,28 @@ _test_connection_for_host() {
     fi
 }
 
+# (Private) Handles inline connection to a host from a list view.
+# Clears the footer, prompts for confirmation, and connects to the host via ssh.
+# This is intended to be called from a key handler to provide an "in-place" action.
+# On success, this function uses `exec` and does not return.
+# Usage: _inline_connect_to_host <host_to_connect> <footer_draw_func>
+# Returns 1 on user cancellation.
+_inline_connect_to_host() {
+    local host_to_connect="$1"
+    local footer_draw_func="$2"
+
+    # Move cursor down past the list and its top divider.
+    _clear_list_view_footer "$footer_draw_func"
+    # The cursor is now at the start of where the footer text was.
+    # Show the prompt here.
+    if prompt_yes_no "Connect to '${host_to_connect}'?" "y"; then
+        clear; exec ssh "$host_to_connect"
+    else
+        # User cancelled. The prompt prints a cancellation message.
+        return 1
+    fi
+}
+
 # Tests the SSH connection to a selected server.
 test_ssh_connection() {
     printBanner "Test SSH Connection"
@@ -2699,15 +2721,9 @@ _host_centric_view_key_handler() {
             ;;
         "$KEY_ENTER")
             if [[ -n "$selected_host" ]]; then
-                # The cursor is at the end of the list content.
-                _clear_list_view_footer "_host_centric_view_draw_footer"
-                # The cursor is now at the start of where the footer text was.
-                # Show the prompt here.
-                if prompt_yes_no "Connect to '${selected_host}'?" "y"; then
-                    clear; exec ssh "$selected_host"
-                else
-                    # User cancelled. The prompt prints a cancellation message.
-                    # Trigger a full redraw to restore the footer and clean up.
+                # _inline_connect_to_host will either exec (and not return) or return non-zero on cancel.
+                if ! _inline_connect_to_host "$selected_host" "_host_centric_view_draw_footer"; then
+                    # If the function returns, it means the user cancelled. Redraw to restore the UI.
                     out_result="refresh"
                 fi
             fi
