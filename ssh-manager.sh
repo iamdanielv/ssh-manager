@@ -1278,38 +1278,38 @@ prompt_for_input() {
     local -n var_ref="$2" # Use nameref to assign to caller's variable
     local default_val="${3:-}"
     local allow_empty="${4:-false}"
-
+ 
     local input_str="$default_val"
     local cursor_pos=${#input_str}
-    local key
     local view_start=0
-
+    local key
+ 
     # --- One-time setup ---
     # Print the static part of the prompt once to reduce flicker.
     local prompt_prefix="${T_QST_ICON} ${prompt_text}: "
-    local prompt_prefix_stripped_len
-    prompt_prefix_stripped_len=$(strip_ansi_codes "$prompt_prefix" | wc -m)
+    local stripped_prefix; stripped_prefix=$(strip_ansi_codes "$prompt_prefix")
+    local prompt_prefix_stripped_len=${#stripped_prefix}
     printMsgNoNewline "$prompt_prefix" >/dev/tty
-
-    while true; do
-        # --- Redraw logic ---
+ 
+    # (Private) Helper to redraw the input line.
+    _prompt_for_input_redraw() {
         # Go to beginning of line, then move right past the static prompt.
         printf '\r\033[%sC' "$prompt_prefix_stripped_len" >/dev/tty
-
+ 
         local term_width; term_width=$(tput cols)
         local available_width=$(( term_width - prompt_prefix_stripped_len ))
         if (( available_width < 1 )); then available_width=1; fi
-
+ 
         # --- Scrolling logic ---
         if (( cursor_pos < view_start )); then view_start=$cursor_pos; fi
         if (( cursor_pos >= view_start + available_width )); then view_start=$(( cursor_pos - available_width + 1 )); fi
-
+ 
         local display_str="${input_str:$view_start:$available_width}"
-
+ 
         # Print the dynamic part: colored input, reset color, and clear rest of line.
         # This overwrites the previous input and clears any leftover characters.
         printMsgNoNewline "${C_L_CYAN}${display_str}${T_RESET}${T_CLEAR_LINE}" >/dev/tty
-
+ 
         # --- Cursor positioning ---
         # The cursor is now at the end of the displayed string. We move it left
         # by the number of characters that are *after* the logical cursor position.
@@ -1318,23 +1318,27 @@ prompt_for_input() {
         if (( chars_after_cursor > 0 )); then
             printf '\033[%sD' "$chars_after_cursor" >/dev/tty
         fi
-
+    }
+ 
+    while true; do
+        _prompt_for_input_redraw
+ 
         key=$(read_single_char </dev/tty)
-
+ 
         case "$key" in
             "$KEY_ENTER")
                 if [[ -n "$input_str" || "$allow_empty" == "true" ]]; then
                     var_ref="$input_str"
                     # On success, clear the line and print the final value.
                     clear_current_line >/dev/tty
-                    printMsg "${T_QST_ICON} ${prompt_text}: ${C_L_GREEN}${var_ref}${T_RESET}"
+                    printMsg "${T_QST_ICON} ${prompt_text}: ${C_L_GREEN}${var_ref}${T_RESET}" >/dev/tty
                     return 0
                 fi
                 ;;
             "$KEY_ESC")
                 # On cancel, clear the line and print a cancellation message.
                 clear_current_line >/dev/tty
-                printf '%b' "${T_QST_ICON} ${prompt_text}: ${C_L_YELLOW}-- cancelled --${T_RESET}" >/dev/tty
+                printMsg "${T_QST_ICON} ${prompt_text}: ${C_L_YELLOW}-- cancelled --${T_RESET}" >/dev/tty
                 sleep 1
                 return 1
                 ;;
@@ -3070,7 +3074,7 @@ main() {
     fi
 
     # Default interactive mode (no flags)
-    _setup_environment "ssh" "ssh-keygen" "ssh-copy-id" "awk" "cat" "grep" "rm" "mktemp" "cp" "date"
+    _setup_environment "ssh" "ssh-keygen" "ssh-copy-id" "awk" "cat" "grep" "rm" "mktemp" "cp" "date" "tput"
 
     main_loop
 }
