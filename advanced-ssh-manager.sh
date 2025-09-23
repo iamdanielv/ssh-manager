@@ -240,7 +240,7 @@ interactive_advanced_host_view() {
 
 main_loop() {
     interactive_advanced_host_view
-    clear
+    clear_screen
     printOkMsg "Goodbye!"
 }
 

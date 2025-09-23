@@ -567,7 +567,7 @@ _interactive_list_view() {
 
     # (Private) Draws the entire UI from scratch.
     _draw_full_view() {
-        clear
+        clear_screen
         # Always hide cursor on a full redraw, as `clear` may show it.
         printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty
         printBanner "$banner"; "$header_func"; printMsg "${C_GRAY}${DIV}${T_RESET}"; _draw_list
@@ -638,7 +638,7 @@ trap 'script_exit_handler' EXIT
 
 script_interrupt_handler() {
     trap - INT # Disable the INT trap to prevent recursive calls.
-    clear
+    clear_screen
     printMsg "${T_WARN_ICON} ${C_L_YELLOW}Operation cancelled by user.${T_RESET}"
     exit 130 # Exit with status 130 (standard for Ctrl+C). The EXIT trap will handle cursor restoration.
 }
@@ -1240,7 +1240,7 @@ regenerate_public_key() {
 # on the calling view to perform a full refresh upon return.
 _launch_editor_for_config() {
     {
-        clear
+        clear_screen
         printMsgNoNewline "${T_CURSOR_SHOW}"
         local editor="${EDITOR:-nvim}"
         if ! command -v "${editor}" &>/dev/null; then
@@ -1695,7 +1695,7 @@ _interactive_editor_loop() {
     local reset_func="$6"
  
     # Initial draw
-    clear
+    clear_screen
     printBanner "$banner_text"
     "$draw_func"
  
@@ -1744,7 +1744,7 @@ _interactive_editor_loop() {
  
         # Redraw the screen if any action that might have changed data or dirtied the screen was taken.
         if [[ "$needs_redraw" == "true" ]]; then
-            clear
+            clear_screen
             printBanner "$banner_text"
             "$draw_func"
         fi
@@ -2060,7 +2060,7 @@ _inline_connect_to_host() {
     # The cursor is now at the start of where the footer text was.
     # Show the prompt here.
     if prompt_yes_no "Connect to '${host_to_connect}'?" "y"; then
-        clear; exec ssh "$host_to_connect"
+        clear_screen; exec ssh "$host_to_connect"
     else
         # User cancelled. The prompt prints a cancellation message.
         return 1
@@ -2673,7 +2673,7 @@ interactive_port_forward_view() {
 run_menu_action() {
     local action_func="$1"
     shift
-    clear
+    clear_screen
 
     # Show the cursor. Many actions launched from cursor-less views (like the
     # server list) require user input and thus need a visible cursor.
@@ -2892,7 +2892,7 @@ _key_view_key_handler() {
                     run_menu_action "copy_selected_ssh_key" "${selected_key_path}.pub"
                 else
                     # This path doesn't use run_menu_action, so we handle the UI manually.
-                    clear; printErrMsg "Public key for '${selected_key_path/#$HOME/\~}' not found."; prompt_to_continue
+                    clear_screen; printErrMsg "Public key for '${selected_key_path/#$HOME/\~}' not found."; prompt_to_continue
                 fi
                 # In either case, the screen was cleared, so a full refresh is needed.
                 out_result="refresh"
@@ -2909,7 +2909,7 @@ _key_view_key_handler() {
                 if [[ -f "${selected_key_path}.pub" ]]; then
                     run_menu_action "view_public_key" "${selected_key_path}.pub"
                 else
-                    clear; printErrMsg "Public key for '${selected_key_path/#$HOME/\~}' not found."; prompt_to_continue
+                    clear_screen; printErrMsg "Public key for '${selected_key_path/#$HOME/\~}' not found."; prompt_to_continue
                 fi
                 out_result="refresh"
             fi ;;
@@ -2934,8 +2934,8 @@ direct_connect() {
     local selected_host
     selected_host=$(select_ssh_host "Select a host to connect to:")
     if [[ $? -eq 0 ]]; then
-        # Replace the script process with the ssh client.
-        exec ssh "$selected_host"
+        # Clear the screen before exec'ing to avoid leaving the TUI visible.
+        clear_screen; exec ssh "$selected_host"
     fi
     # If selection is cancelled, the script will just exit.
     # select_ssh_host prints a cancellation message, so we exit with a non-zero status
@@ -2989,7 +2989,7 @@ _setup_environment() {
 # Main application loop.
 main_loop() {
     interactive_host_centric_view
-    clear
+    clear_screen
     printOkMsg "Goodbye!"
 }
 
@@ -3029,7 +3029,7 @@ main() {
                 ;;
             -c|--connect | -t|--test)
                 # Prereqs for connect and test modes are the same
-                _setup_environment "ssh" "awk" "grep"
+                _setup_environment "ssh" "awk" "grep" "tput"
                 if [[ "$1" == "-c" || "$1" == "--connect" ]]; then
                     direct_connect
                     # direct_connect either execs or exits, so we shouldn't get here.
