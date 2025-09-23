@@ -195,6 +195,12 @@ move_cursor_up() {
     fi
     printf '\r' # Move cursor to the beginning of the line
 } >/dev/tty
+
+clear_screen() {
+    # \033[H: move cursor to home position (top-left)
+    # \033[J: clear from cursor to end of screen. This is often less flickery than `clear`.
+    printf '\033[H\033[J' >/dev/tty
+}
 #endregion Terminal Control
 
 #region User Input
