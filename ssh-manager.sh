@@ -1003,12 +1003,13 @@ get_detailed_ssh_hosts_menu_options() {
         local -a filtered_hosts=()
         for host_alias in "${hosts[@]}"; do
             local host_tags; host_tags=$(_get_tags_for_host "$host_alias")
-            # Convert both the host's tags and the filter tag to lowercase for case-insensitive matching.
-            # Then, check if the lowercase tags string contains the lowercase filter string.
-            # This allows for partial, case-insensitive matching across all of a host's tags.
+            # For case-insensitive matching, convert the filter, tags, and alias to lowercase.
+            # This allows for partial matching against either the host's tags or its alias.
             local lower_host_tags="${host_tags,,}"
             local lower_filter_tag="${filter_tag,,}"
-            if [[ "$lower_host_tags" == *"$lower_filter_tag"* ]]; then
+            local lower_host_alias="${host_alias,,}"
+
+            if [[ "$lower_host_tags" == *"$lower_filter_tag"* || "$lower_host_alias" == *"$lower_filter_tag"* ]]; then
                 filtered_hosts+=("$host_alias")
             fi
         done
@@ -2820,7 +2821,7 @@ _host_centric_view_draw_footer() {
     if [[ -n "${_HOST_VIEW_CURRENT_FILTER:-}" ]]; then
         filter_text="${C_L_YELLOW}(F)ilter: ${_HOST_VIEW_CURRENT_FILTER}${T_RESET} | C(l)ear"
     else
-        filter_text="${C_L_YELLOW}(F)ilter${T_RESET} by tag"
+        filter_text="${C_L_YELLOW}(F)ilter${T_RESET} by tag or alias"
     fi
 
     if [[ "${_HOST_VIEW_FOOTER_EXPANDED:-0}" -eq 1 ]]; then
@@ -2915,8 +2916,8 @@ _host_centric_view_key_handler() {
             # Show cursor for input
             printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty
             # Show the prompt in the cleared footer area.
-            printBanner "Filter by Tag"
-            prompt_for_input "Enter tag to filter by (leave empty to clear)" "_HOST_VIEW_CURRENT_FILTER" "${_HOST_VIEW_CURRENT_FILTER:-}" "true"
+            printBanner "Filter by Tag or Alias"
+            prompt_for_input "Enter text to filter by (leave empty to clear)" "_HOST_VIEW_CURRENT_FILTER" "${_HOST_VIEW_CURRENT_FILTER:-}" "true"
             # Hide cursor again before redrawing the list view
             printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty
             out_result="refresh"
