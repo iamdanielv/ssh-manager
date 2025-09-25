@@ -948,6 +948,25 @@ _remove_host_block_from_config() {
     _process_ssh_config_blocks "$host_to_remove" "$SSH_CONFIG_PATH" "remove"
 }
 
+# (Private) Gets the tags for a given host from its config block.
+# Tags are expected to be on a line like: # Tags: tag1,tag2,tag3
+# Usage: _get_tags_for_host <host_alias>
+_get_tags_for_host() {
+    local host_alias="$1"
+    local host_block
+    host_block=$(_process_ssh_config_blocks "$host_alias" "$SSH_CONFIG_PATH" "keep")
+
+    if [[ -n "$host_block" ]]; then
+        # Grep for the tags line, cut out the prefix, and trim whitespace.
+        # This pipeline handles multiple "# Tags:" lines by joining them with commas.
+        echo "$host_block" | grep -o -E '^\s*#\s*Tags:\s*.*' \
+            | sed -E 's/^\s*#\s*Tags:\s*//' \
+            | sed 's/^\s*//;s/\s*$//' \
+            | paste -sd, -
+    fi
+}
+
+
 # (Private) Helper function to rename both private and public key files.
 # This is designed to be called by `run_with_spinner`.
 # Usage: _rename_key_pair <old_base_path> <new_base_path>
@@ -965,15 +984,41 @@ _rename_key_pair() {
 #   local -a my_menu_options
 #   get_detailed_ssh_hosts_menu_options my_menu_options
 get_detailed_ssh_hosts_menu_options() {
-    local -n out_array="$1" # Use nameref to populate the caller's array
-    local show_key_info="${2:-true}"
+    local -n out_array="$1" # Nameref for the output menu options
+    local -n out_data_payloads_ref="$2" # Nameref for the raw host aliases
+    local show_key_info="${3:-true}"
+    local filter_tag="${4:-}"
     local -a hosts
     mapfile -t hosts < <(get_ssh_hosts)
 
     out_array=() # Clear the output array
+    out_data_payloads_ref=() # Clear the data payload array
 
     if [[ ${#hosts[@]} -eq 0 ]]; then
         return 0 # Not an error, just no hosts
+    fi
+
+    # If filtering, pre-filter the hosts array
+    if [[ -n "$filter_tag" ]]; then
+        local -a filtered_hosts=()
+        for host_alias in "${hosts[@]}"; do
+            local host_tags; host_tags=$(_get_tags_for_host "$host_alias")
+            # Convert both the host's tags and the filter tag to lowercase for case-insensitive matching.
+            # Then, check if the lowercase tags string contains the lowercase filter string.
+            # This allows for partial, case-insensitive matching across all of a host's tags.
+            local lower_host_tags="${host_tags,,}"
+            local lower_filter_tag="${filter_tag,,}"
+            if [[ "$lower_host_tags" == *"$lower_filter_tag"* ]]; then
+                filtered_hosts+=("$host_alias")
+            fi
+        done
+        hosts=("${filtered_hosts[@]}")
+
+        if [[ ${#hosts[@]} -eq 0 ]]; then
+            # If filtering resulted in no hosts, provide a specific message.
+            out_array+=("  ${C_L_YELLOW}(No items found that match filter: ${filter_tag})${T_RESET}")
+            return 0
+        fi
     fi
 
     for host_alias in "${hosts[@]}"; do
@@ -982,10 +1027,11 @@ get_detailed_ssh_hosts_menu_options() {
         # This is safe because the input is controlled (from ssh -G) and the awk script
         # only processes specific, known keys.
         local current_hostname current_user current_identityfile current_port
-        local details; details=$(_get_all_ssh_config_values_as_string "$host_alias") # Gets hostname, user, port
+        local details; details=$(_get_all_ssh_config_values_as_string "$host_alias")
         eval "$details" # Sets the variables
 
         # Now, explicitly get the identity file to avoid using ssh -G defaults.
+        # Also get tags.
         current_identityfile=$(_get_explicit_ssh_config_value "$host_alias" "IdentityFile")
 
         # Clean up identity file path for display
@@ -993,7 +1039,7 @@ get_detailed_ssh_hosts_menu_options() {
         if [[ "$show_key_info" == "true" && -n "$current_identityfile" ]]; then
             # Using #$HOME is safer than a simple string replacement
             # Color the path white, then switch back to cyan for the closing parenthesis.
-            key_info=" (${C_WHITE}${current_identityfile/#$HOME/\~}${C_L_CYAN})"
+            key_info="${C_L_CYAN}(${C_WHITE}${current_identityfile/#$HOME/\~}${C_L_CYAN})"
         fi
 
         # Format port info, only show if not the default port 22
@@ -1003,13 +1049,27 @@ get_detailed_ssh_hosts_menu_options() {
             port_info=":${C_L_YELLOW}${current_port}${C_L_CYAN}"
         fi
 
-        # Build the details part of the string with all its colors.
-        local details_string="${C_L_CYAN}${current_user:-?}@${current_hostname:-?}${port_info}${key_info}"
+        local host_tags; host_tags=$(_get_tags_for_host "$host_alias")
+        local tags_info=""
+        if [[ -n "$host_tags" ]]; then
+            tags_info="${C_GRAY}[${host_tags//,/, }]"
+        fi
 
-        details_string=$(_format_fixed_width_string "$details_string" 46)
+        # --- Two-Line Display Logic ---
+        # Line 1: Alias and core connection info
+        local line1_details="${C_L_CYAN}${current_user:-?}@${current_hostname:-?}${port_info}${T_RESET}"
+        local line1
+        line1=$(printf "%s %s" "${display_alias}" "${line1_details}")
 
-        # Combine the padded host alias and the fixed-width details string.
-        local formatted_string; formatted_string=$(printf "%s %s" "${display_alias}" "${details_string}")
+        # Line 2: Tags and key info, indented
+        local line2_details=""
+        line2_details="${tags_info} ${key_info}"
+
+        local formatted_string="$line1"
+        if [[ -n "$line2_details" ]]; then
+            formatted_string+=$'\n'"   ${line2_details}" # space in front to account for >
+        fi
+        out_data_payloads_ref+=("$host_alias")
         out_array+=("${formatted_string}${T_RESET}")
     done
 }
@@ -1023,25 +1083,23 @@ get_detailed_ssh_hosts_menu_options() {
 #   if [[ $? -eq 0 ]]; then ...
 select_ssh_host() {
     local prompt="$1"
-    local show_key_info="${2:-true}"
-    mapfile -t hosts < <(get_ssh_hosts)
-    if [[ ${#hosts[@]} -eq 0 ]]; then
+    local show_key_info="${2:-true}" # This argument is now effectively unused but kept for compatibility
+
+    local -a menu_options
+    local -a data_payloads
+    get_detailed_ssh_hosts_menu_options menu_options data_payloads "true" "" # No filter
+
+    if [[ ${#menu_options[@]} -eq 0 ]]; then
         printInfoMsg "No hosts found in your SSH config file."
         return 1
     fi
 
-    local -a menu_options
-    get_detailed_ssh_hosts_menu_options menu_options "$show_key_info"
-
     local selected_index
     local header; header=$(printf "  %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "user@hostname[:port]")
     selected_index=$(interactive_menu "single" "$prompt" "$header" "${menu_options[@]}")
-    if [[ $? -ne 0 ]]; then
-        printInfoMsg "Operation cancelled."
-        return 1
-    fi
+    if [[ $? -ne 0 ]]; then printInfoMsg "Operation cancelled."; return 1; fi
 
-    echo "${hosts[$selected_index]}"
+    echo "${data_payloads[$selected_index]}"
     return 0
 }
 
@@ -1417,7 +1475,8 @@ _build_host_block_string() {
     local host_name="$2"
     local user="$3"
     local port="$4"
-    local identity_file="${5:-}"
+    local identity_file="$5"
+    local tags="$6"
 
     # Use a subshell to capture the output of multiple echo commands
     {
@@ -1431,6 +1490,9 @@ _build_host_block_string() {
             echo "    IdentityFile ${identity_file}"
             echo "    IdentitiesOnly yes"
         fi
+        if [[ -n "$tags" ]]; then
+            echo "    # Tags: ${tags}"
+        fi
     }
 }
 
@@ -1441,11 +1503,12 @@ _append_host_to_config() {
     local host_name="$2"
     local user="$3"
     local port="$4"
-    local identity_file="${5:-}"
+    local identity_file="$5"
+    local tags="$6"
 
     (
         echo "" # Separator
-        _build_host_block_string "$host_alias" "$host_name" "$user" "$port" "$identity_file"
+        _build_host_block_string "$host_alias" "$host_name" "$user" "$port" "$identity_file" "$tags"
     ) >> "$SSH_CONFIG_PATH"
 
     local key_msg=""
@@ -1547,7 +1610,8 @@ _host_editor_draw_ui() {
     _editor_format_line "2" "HostName"     "$new_hostname" "$original_hostname"
     _editor_format_line "3" "User"         "$new_user" "$original_user"
     _editor_format_line "4" "Port"         "$new_port" "$original_port"
-    _editor_format_line "5" "IdentityFile" "$new_identityfile" "$original_identityfile" "true"
+    _editor_format_line "5" "IdentityFile" "$new_identityfile" "$original_identityfile" "true" "false"
+    _editor_format_line "6" "Tags"         "$new_tags" "$original_tags" "false" "false"
 
     echo
     printMsg "  ${C_L_WHITE}c) ${C_L_YELLOW}(C)ancel/(D)iscard${T_RESET} all pending changes"
@@ -1576,6 +1640,7 @@ _host_editor_field_handler() {
         '3') clear_current_line; prompt_for_input "User" "new_user" "$new_user" ;;
         '4') clear_current_line; _prompt_for_valid_port "Port" "new_port" "true" ;;
         '5') clear_current_line; _prompt_for_identity_file_interactive "new_identityfile" "$new_identityfile" "$new_alias" "$new_user" "$new_hostname" ;;
+        '6') clear_current_line; prompt_for_input "Tags (comma-separated)" "new_tags" "$new_tags" "true" ;;
         *) return 1 ;; # Unhandled key
     esac
     return 0 # Handled key
@@ -1587,7 +1652,7 @@ _host_editor_field_handler() {
 _host_editor_has_changes() {
     local expanded_new_idfile="${new_identityfile/#\~/$HOME}"
     local expanded_orig_idfile="${original_identityfile/#\~/$HOME}"
-    if [[ "$new_alias" != "$original_alias" || "$new_hostname" != "$original_hostname" || "$new_user" != "$original_user" || "$new_port" != "$original_port" || "$expanded_new_idfile" != "$expanded_orig_idfile" ]]; then
+    if [[ "$new_alias" != "$original_alias" || "$new_hostname" != "$original_hostname" || "$new_user" != "$original_user" || "$new_port" != "$original_port" || "$expanded_new_idfile" != "$expanded_orig_idfile" || "$new_tags" != "$original_tags" ]]; then
         return 0 # true, has changes
     fi
     return 1 # false, no changes
@@ -1601,6 +1666,7 @@ _host_editor_reset_fields() {
     new_user="$original_user"
     new_port="$original_port"
     new_identityfile="$original_identityfile"
+    new_tags="$original_tags"
 }
 
 # (Private) Interactively prompts the user to select or create an IdentityFile when editing a host.
@@ -1687,8 +1753,8 @@ add_ssh_host() {
     printBanner "Add New SSH Host"
 
     # --- Create from scratch logic ---
-    local initial_alias="" initial_hostname="" initial_user="$USER" initial_port="22" initial_identityfile=""
-    local new_alias="$initial_alias" new_hostname="$initial_hostname" new_user="$initial_user" new_port="$initial_port" new_identityfile="$initial_identityfile"
+    local initial_alias="" initial_hostname="" initial_user="$USER" initial_port="22" initial_identityfile="" initial_tags=""
+    local new_alias="$initial_alias" new_hostname="$initial_hostname" new_user="$initial_user" new_port="$initial_port" new_identityfile="$initial_identityfile" new_tags="$initial_tags"
 
     local banner_text="Add New SSH Host"
 
@@ -1709,7 +1775,7 @@ add_ssh_host() {
         printErrMsg "Host alias '${new_alias}' already exists."; sleep 2; return 1
     fi
 
-    _append_host_to_config "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile"
+    _append_host_to_config "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile" "$new_tags"
 
     if [[ -n "$new_identityfile" ]]; then
         # When creating from scratch, it's more likely the user wants to copy the key immediately.
@@ -1810,15 +1876,16 @@ edit_ssh_host() {
     fi
 
     # Get original values to compare against for changes.
-    local original_hostname original_user original_port original_identityfile
+    local original_hostname original_user original_port original_identityfile original_tags
     local details; details=$(_get_all_ssh_config_values_as_string "$original_alias")
     # Use parameter expansion to rename the 'current_*' variables from the helper to 'original_*'.
     eval "${details//current/original}" # Sets original_hostname, original_user, original_port
     original_identityfile=$(_get_explicit_ssh_config_value "$original_alias" "IdentityFile")
+    original_tags=$(_get_tags_for_host "$original_alias")
     [[ -z "$original_port" ]] && original_port="22"
 
     # These variables will hold the values as they are being edited.
-    local new_alias="$original_alias" new_hostname="$original_hostname" new_user="$original_user" new_port="$original_port" new_identityfile="$original_identityfile"
+    local new_alias="$original_alias" new_hostname="$original_hostname" new_user="$original_user" new_port="$original_port" new_identityfile="$original_identityfile" new_tags="$original_tags"
 
     local banner_text="Edit SSH Host - ${C_L_CYAN}${original_alias}${C_BLUE}"
     if ! _interactive_editor_loop "edit" "$banner_text" \
@@ -1829,7 +1896,7 @@ edit_ssh_host() {
 
     # --- Save Logic ---
     local expanded_new_idfile="${new_identityfile/#\~/$HOME}"; local expanded_orig_idfile="${original_identityfile/#\~/$HOME}"
-    if [[ "$new_alias" == "$original_alias" && "$new_hostname" == "$original_hostname" && "$new_user" == "$original_user" && "$new_port" == "$original_port" && "$expanded_new_idfile" == "$expanded_orig_idfile" ]]; then
+    if [[ "$new_alias" == "$original_alias" && "$new_hostname" == "$original_hostname" && "$new_user" == "$original_user" && "$new_port" == "$original_port" && "$expanded_new_idfile" == "$expanded_orig_idfile" && "$new_tags" == "$original_tags" ]]; then
         clear_current_line
         printInfoMsg "No changes detected. Host configuration remains unchanged."; sleep 1; return 0
     fi
@@ -1844,7 +1911,7 @@ edit_ssh_host() {
     fi
 
     local config_without_host; config_without_host=$(_remove_host_block_from_config "$original_alias")
-    local new_host_block; new_host_block=$(_build_host_block_string "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile")
+    local new_host_block; new_host_block=$(_build_host_block_string "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile" "$new_tags")
     printf '%s\n\n%s' "$config_without_host" "$new_host_block" | cat -s > "$SSH_CONFIG_PATH"
     clear_current_line
     if [[ "$new_alias" != "$original_alias" ]]; then
@@ -1928,14 +1995,15 @@ clone_ssh_host() {
     fi
 
     # Get original values from the source host.
-    local original_hostname original_user original_port original_identityfile
+    local original_hostname original_user original_port original_identityfile original_tags
     local details; details=$(_get_all_ssh_config_values_as_string "$host_to_clone")
     eval "${details//current/original}" # Sets original_hostname, original_user, original_port
     original_identityfile=$(_get_explicit_ssh_config_value "$host_to_clone" "IdentityFile")
+    original_tags=$(_get_tags_for_host "$host_to_clone")
     [[ -z "$original_port" ]] && original_port="22"
 
     # These variables will hold the values for the new cloned host.
-    local new_hostname="$original_hostname" new_user="$original_user" new_port="$original_port" new_identityfile="$original_identityfile"
+    local new_hostname="$original_hostname" new_user="$original_user" new_port="$original_port" new_identityfile="$original_identityfile" new_tags="$original_tags"
     # Propose a unique new alias.
     local new_alias i=1
     while true; do
@@ -1957,7 +2025,7 @@ clone_ssh_host() {
         printErrMsg "Host alias '${new_alias}' already exists."; sleep 2; return 1
     fi
 
-    _append_host_to_config "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile"
+    _append_host_to_config "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile" "$new_tags"
 
     if [[ -n "$new_identityfile" ]] && prompt_yes_no "Copy public key to the new server now?" "n"; then
         copy_ssh_id_for_host "$new_alias" "${new_identityfile}.pub"
@@ -2597,17 +2665,17 @@ list_active_port_forwards() {
 list_all_hosts() {
     printBanner "List All Configured Hosts"
 
-    local -a menu_options
+    local -a menu_options data_payloads
     # Get detailed host list, including key info.
-    get_detailed_ssh_hosts_menu_options menu_options "true"
+    get_detailed_ssh_hosts_menu_options menu_options data_payloads "true" ""
 
     if [[ ${#menu_options[@]} -eq 0 ]]; then
-        printInfoMsg "No hosts found in your SSH config file."
+        printInfoMsg "No hosts found in your SSH config file matching the current filter."
         return
     fi
 
     local header
-    header=$(printf "%-20s %s" "HOST ALIAS" "user@hostname[:port] (key)")
+    header=$(printf "%-20s %s" "HOST ALIAS" "user@hostname[:port]")
     printMsg "${C_WHITE}${header}${T_RESET}"
     printMsg "${C_GRAY}${DIV}${T_RESET}"
 
@@ -2742,15 +2810,23 @@ run_menu_action() {
 
 # (Private) A shared function to draw a standardized header for host list views.
 _common_host_view_draw_header() {
-    local header; header=$(printf "   %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "user@hostname[:port] (key)")
+    local header; header=$(printf "   %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "user@hostname[:port]")
     printMsg "${C_WHITE}${header}${T_RESET}"
 }
 
 _host_centric_view_draw_footer() {
     # This function now depends on _HOST_VIEW_FOOTER_EXPANDED being set in its calling scope.
+    local filter_text=""
+    if [[ -n "${_HOST_VIEW_CURRENT_FILTER:-}" ]]; then
+        filter_text="${C_L_YELLOW}(F)ilter: ${_HOST_VIEW_CURRENT_FILTER}${T_RESET} | C(l)ear"
+    else
+        filter_text="${C_L_YELLOW}(F)ilter${T_RESET} by tag"
+    fi
+
     if [[ "${_HOST_VIEW_FOOTER_EXPANDED:-0}" -eq 1 ]]; then
         printMsg "  ${T_BOLD}Host Actions:${T_RESET} ${C_L_GREEN}(A)dd${T_RESET} | ${C_L_RED}(D)elete${T_RESET} | ${C_L_BLUE}(C)lone${T_RESET}           │ ${C_BLUE}? fewer options${T_RESET}"
         printMsg "  ${T_BOLD}Host Edit:${T_RESET}    ${C_L_CYAN}(E)dit${T_RESET} host details                  │ ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET}"
+        printMsg "  ${T_BOLD}Filter:${T_RESET}       ${filter_text}"
         printMsg "  ${T_BOLD}Manage:${T_RESET}       SSH ${C_MAGENTA}(K)eys${T_RESET} | ${C_L_CYAN}(P)ort${T_RESET} Forwards"
         printMsg "                ${C_L_BLUE}(O)pen${T_RESET} ssh config in editor"
         printMsg "  ${T_BOLD}Connection:${T_RESET}   ${C_L_YELLOW}ENTER${T_RESET} Connect | (${C_L_CYAN}t${T_RESET})est selected | (${C_L_CYAN}T${T_RESET})est all"
@@ -2758,6 +2834,7 @@ _host_centric_view_draw_footer() {
     else
         printMsg "  ${T_BOLD}Host Actions:${T_RESET} ${C_L_GREEN}(A)dd${T_RESET} | ${C_L_RED}(D)elete${T_RESET} | ${C_L_BLUE}(C)lone${T_RESET}           │ ${C_BLUE}? more options${T_RESET}"
         printMsg "  ${T_BOLD}Host Edit:${T_RESET}    ${C_L_CYAN}(E)dit${T_RESET} host details                  │ ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET}"
+        printMsg "  ${T_BOLD}Filter:${T_RESET}       ${filter_text}"
     fi
 }
 
@@ -2765,10 +2842,8 @@ _host_centric_view_draw_footer() {
 _common_host_view_refresh() {
     local -n out_menu_options="$1"
     local -n out_data_payloads="$2"
-    # Get raw host names for the data payload
-    mapfile -t out_data_payloads < <(get_ssh_hosts)
-    # Get formatted strings for display
-    get_detailed_ssh_hosts_menu_options out_menu_options "true"
+    # This function now populates both arrays based on the filter.
+    get_detailed_ssh_hosts_menu_options out_menu_options out_data_payloads "true" "${_HOST_VIEW_CURRENT_FILTER:-}"
 }
 
 _host_centric_view_key_handler() {
@@ -2834,6 +2909,25 @@ _host_centric_view_key_handler() {
             _launch_editor_for_config
             out_result="refresh"
             ;;
+        'f'|'F')
+            # Move cursor down past the list and its bottom divider.
+            _clear_list_view_footer "_host_centric_view_draw_footer"
+            # Show cursor for input
+            printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty
+            # Show the prompt in the cleared footer area.
+            printBanner "Filter by Tag"
+            prompt_for_input "Enter tag to filter by (leave empty to clear)" "_HOST_VIEW_CURRENT_FILTER" "${_HOST_VIEW_CURRENT_FILTER:-}" "true"
+            # Hide cursor again before redrawing the list view
+            printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty
+            out_result="refresh"
+            ;;
+        'l'|'L')
+            # Clear filter
+            if [[ -n "${_HOST_VIEW_CURRENT_FILTER:-}" ]]; then
+                _HOST_VIEW_CURRENT_FILTER=""
+                out_result="refresh"
+            fi
+            ;;
         "$KEY_ESC"|"q"|"Q") out_result="exit" ;; # Exit script
     esac
 }
@@ -2842,6 +2936,7 @@ interactive_host_centric_view() {
     # This variable will be visible to the functions called by _interactive_list_view
     # because they are executed in the same shell process, not a subshell.
     local _HOST_VIEW_FOOTER_EXPANDED=0
+    local _HOST_VIEW_CURRENT_FILTER=""
 
     _interactive_list_view \
         "SSH Manager" \
