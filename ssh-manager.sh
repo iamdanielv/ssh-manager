@@ -1847,7 +1847,11 @@ edit_ssh_host() {
     local new_host_block; new_host_block=$(_build_host_block_string "$new_alias" "$new_hostname" "$new_user" "$new_port" "$new_identityfile")
     printf '%s\n\n%s' "$config_without_host" "$new_host_block" | cat -s > "$SSH_CONFIG_PATH"
     clear_current_line
-    printOkMsg "Host '${original_alias}' has been updated to '${new_alias}'."
+    if [[ "$new_alias" != "$original_alias" ]]; then
+        printOkMsg "Host '${original_alias}' has been updated to '${new_alias}'."
+    else
+        printOkMsg "Host '${original_alias}' has been updated."
+    fi
 
     if [[ -n "$original_identityfile" && "$expanded_new_idfile" != "$expanded_orig_idfile" ]]; then
         _cleanup_orphaned_key "$original_identityfile"
