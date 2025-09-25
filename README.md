@@ -42,20 +42,7 @@ It is a single, self-contained `bash` script with no external dependencies beyon
 ──────────────────────────────────────────────────────────────────────
 ```
 
-### Add a New Host - Step 1
-
-```shell
-+ Add New SSH Host
-──────────────────────────────────────────────────────────────────────
-[?] How would you like to add the new host?
-──────────────────────────────────────────────────────────────────────
- ❯  Create a new host from scratch 
-    Clone settings from an existing host 
-──────────────────────────────────────────────────────────────────────
-  ↓/↑ Move | SPACE/ENTER to confirm | Q/ESC to cancel
-```
-
-### Add a New Host - Step 2
+### Add a New Host
 
 ```shell
 + Add New SSH Host
@@ -66,6 +53,7 @@ Configure the new host:
   3)   User           : daniel
   4)   Port           : 22
   5)   IdentityFile   : (not set)
+  6)   Tags           : (not set)
 
   c) (C)ancel/(D)eset fields
   s) (S)ave and Quit
@@ -117,7 +105,9 @@ Configure the new host:
   - Collapsible footers to maximize content visibility.
   - In-place actions (start/stop, delete) for a smooth, flicker-free workflow.
   - input validation to prevent configuration errors.
-
+- **Tagging and Filtering**:
+  - Assign tags to hosts to organize them.
+  - Filter the host list by tag or alias to quickly find what you need.
 The project is split into two scripts with distinct features:
 
 ### `ssh-manager.sh` (Main Script)
@@ -127,7 +117,7 @@ The main script provides a TUI for all your common, day-to-day SSH tasks.
 - **Server Management**:
   - Interactively select a host and connect.
   - Add new hosts from scratch or by cloning an existing one.
-  - Edit host parameters (alias, hostname, user, port, key file) using a step-by-step wizard.
+  - Edit host parameters (alias, hostname, user, port, key file, tags) using a step-by-step wizard.
   - `delete` and `clone` hosts.
   - Test the connection to a single host or all hosts in parallel.
 - **Key Management**:
@@ -150,6 +140,19 @@ This script provides a focused TUI for more complex or potentially destructive o
 - **Advanced Editing**: Open a specific host's entire configuration block in your `$EDITOR`.
 - **Backup**: Create a timestamped backup of your config file.
 - **Import/Export**: Export selected host configurations to a new file or import them from a file into your main config.
+
+## 🏷️ Tagging and Filtering
+
+You can add tags to your hosts to organize them. Tags are stored as a comment in the host's configuration block:
+
+```ssh-config
+Host my-server
+    HostName 192.168.1.100
+    User admin
+    # Tags: web, production
+```
+
+To filter the hosts list, press `f` in the main view and enter a tag or part of a host's alias.
 
 ## 🚀 Quick Actions
 
