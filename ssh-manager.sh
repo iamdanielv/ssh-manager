@@ -1040,7 +1040,7 @@ get_detailed_ssh_hosts_menu_options() {
         if [[ "$show_key_info" == "true" && -n "$current_identityfile" ]]; then
             # Using #$HOME is safer than a simple string replacement
             # Color the path white, then switch back to cyan for the closing parenthesis.
-            key_info="${C_L_CYAN}(${C_WHITE}${current_identityfile/#$HOME/\~}${C_L_CYAN})"
+            key_info="${C_WHITE}(${current_identityfile/#$HOME/\~})"
         fi
 
         # Format port info, only show if not the default port 22
@@ -1053,19 +1053,24 @@ get_detailed_ssh_hosts_menu_options() {
         local host_tags; host_tags=$(_get_tags_for_host "$host_alias")
         local tags_info=""
         if [[ -n "$host_tags" ]]; then
-            tags_info="${C_GRAY}[${host_tags//,/, }]"
+            tags_info="${C_GRAY}[${host_tags//,/, }]${T_RESET}"
         fi
 
         # --- Two-Line Display Logic ---
         # Line 1: Alias and core connection info
-        local line1_details="${C_L_CYAN}${current_user:-?}@${current_hostname:-?}${port_info}${T_RESET}"
+        local raw_line1_details="${C_L_CYAN}${current_user:-?}@${current_hostname:-?}${port_info}${T_RESET}"
+        local line1_details; line1_details=$(_format_fixed_width_string "$raw_line1_details" 46)
         local line1
-        line1=$(printf "%s %s" "${display_alias}" "${line1_details}")
+        line1=$(printf "%s %s" "$display_alias" "$line1_details")
 
         # Line 2: Tags and key info, indented
         local line2_details=""
-        line2_details="${tags_info} ${key_info}"
+        # Combine tags and key info, trimming any leading/trailing whitespace that might result
+        # if one of them is empty.
+        line2_details=$(echo "${tags_info} ${key_info}" | sed 's/^\s*//;s/\s*$//')
 
+        # Truncate the second line to fit within the view's width (approx 70 chars, minus indentation).
+        line2_details=$(_format_fixed_width_string "$line2_details" 67)
         local formatted_string="$line1"
         if [[ -n "$line2_details" ]]; then
             formatted_string+=$'\n'"   ${line2_details}" # space in front to account for >
