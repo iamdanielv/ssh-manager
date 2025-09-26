@@ -19,13 +19,14 @@ It is a single, self-contained `bash` script with no external dependencies beyon
 ──────────────────────────────────────────────────────────────────────
    HOST ALIAS           user@hostname[:port] (key)
 ──────────────────────────────────────────────────────────────────────
- ❯ dev                  daniel@dev.local
-   dev-clonessssssssss… daniel@dev.local:223 (~/.ssh/id_rsa)
-   kvm                  daniel@kvm.main:24
-   kube                 kuber@kube.test (~/ssh/kube_id_rsa)
+ ❯ kvm                  daniel@kvm.local:223                           
+   (~/.ssh/id_ed25519)                                  
+   kube                 daniel@kube.local                           
+   [dev, test, kube] (~/.ssh/kube_id_ed25519)               
 ──────────────────────────────────────────────────────────────────────
   Host Actions: (A)dd | (D)elete | (C)lone           │ ? more options
   Host Edit:    (E)dit host details                  │ Q/ESC (Q)uit
+  Filter:       (F)ilter by tag or alias
 ──────────────────────────────────────────────────────────────────────
 ```
 
@@ -35,6 +36,7 @@ It is a single, self-contained `bash` script with no external dependencies beyon
 ──────────────────────────────────────────────────────────────────────
   Host Actions: (A)dd | (D)elete | (C)lone           │ ? fewer options
   Host Edit:    (E)dit host details                  │ Q/ESC (Q)uit
+  Filter:       (F)ilter by tag or alias
   Manage:       SSH (K)eys | (P)ort Forwards
                 (O)pen ssh config in editor
   Connection:   ENTER Connect | (t)est selected | (T)est all
