@@ -452,12 +452,18 @@ _prompt_for_valid_port() {
 # Generic interactive menu function.
 # This is the core implementation for both single and multi-select menus.
 #
+# It handles keyboard navigation (up/down), selection, and cancellation.
+# In "multi" mode, it supports toggling items with the spacebar and has special
+# handling for an option named "All" to select/deselect all other items.
+#
 # Usage:
 #   interactive_menu <mode> <prompt> <header> <options_array>
 #
 #   mode: "single" or "multi"
 #
 # Returns:
+#   - In "single" mode, space or enter confirms the selection.
+#   - In "multi" mode, space toggles selection, and enter confirms.
 #   - For "single" mode: The index of the selected option on stdout.
 #   - For "multi" mode: The indices of selected options on stdout, one per line.
 #   - Exit code 0 on success, 1 on cancellation or no selection.
