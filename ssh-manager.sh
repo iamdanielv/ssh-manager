@@ -1603,21 +1603,17 @@ _editor_format_line() {
     printf "  ${C_L_WHITE}%s)${T_RESET} %b %-15s: %b\n" "$key" "$change_indicator" "$label" "$display_val"
 }
 
-# (Private) Draws the UI for the interactive host editor.
-# It assumes all 'new_*' and 'original_*' variables are set in the calling scope.
-# It also expects 'mode' to be set.
-_host_editor_draw_ui() {
-    local title="Configure the host details:"
-    if [[ "$mode" == "add" ]]; then title="Configure the new host:"; fi
-    if [[ "$mode" == "clone" ]]; then title="Configure the new cloned host:"; fi
+# (Private) A generic UI drawing function for editors.
+# It prints a title, calls a function to draw the fields, and prints a footer.
+# Usage: _draw_generic_editor_ui <title> <fields_draw_func>
+_draw_generic_editor_ui() {
+    local title="$1"
+    local fields_draw_func="$2"
+
     printMsg "$title"
 
-    _editor_format_line "1" "Host (Alias)" "$new_alias" "$original_alias" "false" "true"
-    _editor_format_line "2" "HostName"     "$new_hostname" "$original_hostname"
-    _editor_format_line "3" "User"         "$new_user" "$original_user"
-    _editor_format_line "4" "Port"         "$new_port" "$original_port"
-    _editor_format_line "5" "IdentityFile" "$new_identityfile" "$original_identityfile" "true" "false"
-    _editor_format_line "6" "Tags"         "$new_tags" "$original_tags" "false" "false"
+    # Call the function that draws the specific fields
+    "$fields_draw_func"
 
     echo
     printMsg "  ${C_L_WHITE}c) ${C_L_YELLOW}(C)ancel/(D)iscard${T_RESET} all pending changes"
@@ -1625,6 +1621,42 @@ _host_editor_draw_ui() {
     printMsg "  ${C_L_WHITE}q) ${C_L_YELLOW}(Q)uit${T_RESET} without saving (or press ${C_L_YELLOW}ESC${T_RESET})"
     echo
     printMsgNoNewline "${T_QST_ICON} Your choice: "
+}
+
+# (Private) Draws the fields for the host editor.
+_host_editor_draw_fields() {
+    _editor_format_line "1" "Host (Alias)" "$new_alias" "$original_alias" "false" "true"
+    _editor_format_line "2" "HostName"     "$new_hostname" "$original_hostname"
+    _editor_format_line "3" "User"         "$new_user" "$original_user"
+    _editor_format_line "4" "Port"         "$new_port" "$original_port"
+    _editor_format_line "5" "IdentityFile" "$new_identityfile" "$original_identityfile" "true" "false"
+    _editor_format_line "6" "Tags"         "$new_tags" "$original_tags" "false" "false"
+}
+
+# (Private) Draws the fields for the port forward editor.
+_port_forward_editor_draw_fields() {
+    local p1_label="Local Port" h_label="Remote Host" p2_label="Remote Port"
+    if [[ "$new_type" == "Remote" ]]; then
+        p1_label="Remote Port" h_label="Local Host" p2_label="Local Port"
+    fi
+
+    _editor_format_line "1" "Type" "$new_type" "$original_type"
+    _editor_format_line "2" "SSH Host" "$new_host" "$original_host"
+    _editor_format_line "3" "${p1_label}" "$new_p1" "$original_p1"
+    _editor_format_line "4" "${h_label}" "$new_h" "$original_h"
+    _editor_format_line "5" "${p2_label}" "$new_p2" "$original_p2"
+    _editor_format_line "6" "Description" "$new_desc" "$original_desc"
+}
+
+# (Private) Draws the UI for the interactive host editor.
+# It assumes all 'new_*' and 'original_*' variables are set in the calling scope.
+# It also expects 'mode' to be set.
+_host_editor_draw_ui() {
+    local title="Configure the host details:"
+    if [[ "$mode" == "add" ]]; then title="Configure the new host:"; fi
+    if [[ "$mode" == "clone" ]]; then title="Configure the new cloned host:"; fi
+
+    _draw_generic_editor_ui "$title" "_host_editor_draw_fields"
 }
 
 # (Private) Handles key presses for the interactive host editor's fields.
@@ -2328,25 +2360,11 @@ _save_all_port_forwards() {
 # It assumes all 'new_*' and 'original_*' variables are set in the calling scope.
 # It also expects 'mode' to be set.
 _port_forward_editor_draw_ui() {
-    local p1_label="Local Port" h_label="Remote Host" p2_label="Remote Port"
-    if [[ "$new_type" == "Remote" ]]; then
-        p1_label="Remote Port" h_label="Local Host" p2_label="Local Port"
-    fi
+    local title="Choose an option to configure:"
+    if [[ "$mode" == "add" ]]; then title="Configure the new saved port forward:"; fi
+    if [[ "$mode" == "clone" ]]; then title="Configure the cloned port forward:"; fi
 
-    printMsg "Choose an option to configure:"
-    _editor_format_line "1" "Type" "$new_type" "$original_type"
-    _editor_format_line "2" "SSH Host" "$new_host" "$original_host"
-    _editor_format_line "3" "${p1_label}" "$new_p1" "$original_p1"
-    _editor_format_line "4" "${h_label}" "$new_h" "$original_h"
-    _editor_format_line "5" "${p2_label}" "$new_p2" "$original_p2"
-    _editor_format_line "6" "Description" "$new_desc" "$original_desc"
-
-    echo
-    printMsg "  ${C_L_WHITE}c) ${C_L_YELLOW}(C)ancel/(D)iscard${T_RESET} all pending changes"
-    printMsg "  ${C_L_WHITE}s) ${C_L_GREEN}(S)ave${T_RESET} and Quit"
-    printMsg "  ${C_L_WHITE}q) ${C_L_YELLOW}(Q)uit${T_RESET} without saving (or press ${C_L_YELLOW}ESC${T_RESET})"
-    echo
-    printMsgNoNewline "${T_QST_ICON} Your choice: "
+    _draw_generic_editor_ui "$title" "_port_forward_editor_draw_fields"
 }
 
 # (Private) Handles key presses for the interactive port forward editor's fields.
