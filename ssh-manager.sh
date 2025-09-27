@@ -81,9 +81,26 @@ printWarnMsg() { printMsg "${T_WARN_ICON} ${1}${T_RESET}"; }
 
 # Generates a banner string.
 generate_banner_string() {
-    local prompt="$1"
-    # H1-style banner for top-level calls
-    printf '%s' "${C_L_BLUE}+ ${prompt}"$'\n'"${DIV}${T_RESET}"
+    local text="$1"
+    local total_width=70
+    local prefix="┏"
+
+    # Step 1: Print the full-width line of '━' characters.
+    local line
+    printf -v line '%*s' "$((total_width - 1))"
+    line="${line// /━}"
+    printf '%s' "${C_L_BLUE}${prefix}${line}${T_RESET}"
+
+    # Step 2: Move the cursor back to the beginning of the line.
+    printf '\r'
+
+    # Step 3: Format the text to fit, truncating with an ellipsis if needed.
+    # The available space is the total width minus the prefix (1) and surrounding spaces (2).
+    local text_to_print; text_to_print=$(_truncate_string "$text" $((total_width - 3)))
+
+    # Step 4: Print the prefix and text over the '━' characters.
+    # We add a trailing space to the text to ensure there's a gap between the text and the line.
+    printf '%s' "${C_L_BLUE}${prefix} ${text_to_print} ${T_RESET}"
 }
 
 printBanner() {
@@ -119,6 +136,43 @@ strip_ansi_codes() {
     echo -n "$s"
 }
 
+# (Private) Truncates a string to a maximum visual width if it's too long.
+# Does not pad the string if it is shorter than the max width.
+# Correctly handles strings containing ANSI color codes.
+# Usage: truncated_string=$(_truncate_string "input string" 10)
+_truncate_string() {
+    local input_str="$1"
+    local max_len="$2"
+    local trunc_char="${3:-…}"
+    local trunc_char_len=${#trunc_char}
+
+    local stripped_str; stripped_str=$(strip_ansi_codes "$input_str")
+    local len=${#stripped_str}
+
+    if (( len <= max_len )); then
+        # String is short enough, return it as is.
+        echo -n "$input_str"
+        return
+    fi
+
+    # String is too long, perform truncation.
+    local truncate_to_len=$(( max_len - trunc_char_len ))
+    local new_str=""
+    local visible_count=0
+    local i=0
+    local in_escape=false
+    # This loop is complex because it needs to preserve color codes while counting visible characters.
+    while (( i < ${#input_str} && visible_count < truncate_to_len )); do
+        local char="${input_str:i:1}"
+        new_str+="$char"
+        if [[ "$char" == $'\033' ]]; then in_escape=true;
+        elif ! $in_escape; then (( visible_count++ )); fi
+        if $in_escape && [[ "$char" =~ [a-zA-Z] ]]; then in_escape=false; fi
+        ((i++))
+    done
+    echo -n "${new_str}${trunc_char}"
+}
+
 # (Private) Formats a string to a fixed visual width by padding or truncating.
 # Correctly handles strings containing ANSI color codes.
 # Usage: formatted_string=$(_format_fixed_width_string "input string" 20)
@@ -126,7 +180,7 @@ _format_fixed_width_string() {
     local input_str="$1"
     local max_len="$2"
     local trunc_char="${3:-…}"
-    local trunc_char_len=${#trunc_char}
+        local trunc_char_len=${#trunc_char}
 
     local stripped_str; stripped_str=$(strip_ansi_codes "$input_str")
     local len=${#stripped_str}
@@ -158,7 +212,7 @@ _format_fixed_width_string() {
     else
         # Pad
         local padding_needed=$(( max_len - len ))
-        printf "%s%*s" "$input_str" "$padding_needed" ""
+                printf "%s%*s" "$input_str" "$padding_needed" ""
     fi
 }
 #endregion Logging & Banners
@@ -505,7 +559,7 @@ interactive_menu() {
     move_cursor_up 2 # Move to end of options list
 
     # --- Input Loop ---
-    local key; local lines_above=$((2 + header_lines)); local lines_below=2
+    local key; local lines_above=$((1 + header_lines)); local lines_below=2
     while true; do
         move_cursor_up "$num_options"; key=$(read_single_char </dev/tty)
         case "$key" in
@@ -1652,9 +1706,9 @@ _port_forward_editor_draw_fields() {
 # It assumes all 'new_*' and 'original_*' variables are set in the calling scope.
 # It also expects 'mode' to be set.
 _host_editor_draw_ui() {
-    local title="Configure the host details:"
-    if [[ "$mode" == "add" ]]; then title="Configure the new host:"; fi
-    if [[ "$mode" == "clone" ]]; then title="Configure the new cloned host:"; fi
+    local title="${C_L_BLUE}┗ Configure the host details:"
+    if [[ "$mode" == "add" ]]; then title="${C_L_BLUE}┗ Configure the new host:"; fi
+    if [[ "$mode" == "clone" ]]; then title="${C_L_BLUE}┗ Configure the new cloned host:"; fi
 
     _draw_generic_editor_ui "$title" "_host_editor_draw_fields"
 }
@@ -2360,9 +2414,9 @@ _save_all_port_forwards() {
 # It assumes all 'new_*' and 'original_*' variables are set in the calling scope.
 # It also expects 'mode' to be set.
 _port_forward_editor_draw_ui() {
-    local title="Choose an option to configure:"
-    if [[ "$mode" == "add" ]]; then title="Configure the new saved port forward:"; fi
-    if [[ "$mode" == "clone" ]]; then title="Configure the cloned port forward:"; fi
+    local title="${C_L_BLUE}┗ Choose an option to configure:"
+    if [[ "$mode" == "add" ]]; then title="${C_L_BLUE}┗ Configure the new saved port forward:"; fi
+    if [[ "$mode" == "clone" ]]; then title="${C_L_BLUE}┗ Configure the cloned port forward:"; fi
 
     _draw_generic_editor_ui "$title" "_port_forward_editor_draw_fields"
 }
@@ -2735,9 +2789,9 @@ _format_saved_port_forward_line() {
 
 _port_forward_view_draw_header() {
     local header1 header2
-    header1=$(printf "   %-20s %-45s" "HOST" "FORWARD")
+    header1=$(printf "${C_L_BLUE}┃${T_RESET}  %-20s %-45s" "HOST" "FORWARD")
     # The second header line is indented to match the item's second line.
-    header2=$(printf "   %-3s %-8s %-7s %-45s" "[ ]" "PID" "TYPE" "DESCRIPTION")
+    header2=$(printf "${C_L_BLUE}┃${T_RESET}  %-3s %-8s %-7s %-45s" "[ ]" "PID" "TYPE" "DESCRIPTION")
     printMsg "${C_WHITE}${header1}${T_RESET}"
     printMsg "${C_WHITE}${header2}${T_RESET}"
 }
@@ -2834,7 +2888,7 @@ run_menu_action() {
 
 # (Private) A shared function to draw a standardized header for host list views.
 _common_host_view_draw_header() {
-    local header; header=$(printf "   %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "user@hostname[:port]")
+    local header; header=$(printf "${C_L_BLUE}┗${T_RESET}  %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "user@hostname[:port]")
     printMsg "${C_WHITE}${header}${T_RESET}"
 }
 
@@ -2974,7 +3028,7 @@ interactive_host_centric_view() {
 
 _key_view_draw_header() {
     local header; header=$(printf "%-25s %-10s %-6s %-23s" "KEY FILENAME" "TYPE" "BITS" "COMMENT")
-    printMsg "   ${C_WHITE}${header}${T_RESET}"
+    printMsg "${C_L_BLUE}┗${C_WHITE}  ${header}${T_RESET}"
 }
 
 _key_view_draw_footer() {
