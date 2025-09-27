@@ -210,7 +210,7 @@ interactive_menu() {
                 if [[ "$mode" == "multi" ]]; then checkbox_text=" _ "; if (( selected_options[i] == 1 )); then checkbox_text=" ${T_BOLD}${C_GREEN}✓${T_FG_RESET} "; fi; fi
                 local this_line="${options[i]}"
                 this_line="$(_format_fixed_width_string "$this_line" 67)"
-                output+="${checkbox_text}${options[i]}${T_CLEAR_LINE}${T_RESET}"$'\n'
+                output+="${checkbox_text}${this_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
             fi
         done
         printf '%b' "$output"
