@@ -185,34 +185,13 @@ _format_fixed_width_string() {
     local stripped_str; stripped_str=$(strip_ansi_codes "$input_str")
     local len=${#stripped_str}
 
-    if (( len > max_len )); then
-        # Truncate
-        local truncate_to_len=$(( max_len - trunc_char_len ))
-        local new_str=""
-        local visible_count=0
-        local i=0
-        local in_escape=false
-        # This loop is complex because it needs to preserve color codes while counting visible characters.
-        while (( i < ${#input_str} && visible_count < truncate_to_len )); do
-            local char="${input_str:i:1}"
-            new_str+="$char"
-
-            if [[ "$char" == $'\033' ]]; then
-                in_escape=true
-            elif ! $in_escape; then
-                (( visible_count++ ))
-            fi
-
-            if $in_escape && [[ "$char" =~ [a-zA-Z] ]]; then
-                in_escape=false
-            fi
-            ((i++))
-        done
-        echo -n "${new_str}${trunc_char}"
-    else
+    if (( len <= max_len )); then
         # Pad
         local padding_needed=$(( max_len - len ))
                 printf "%s%*s" "$input_str" "$padding_needed" ""
+    else
+        # Truncate by calling the dedicated truncation function
+        _truncate_string "$input_str" "$max_len" "$trunc_char"
     fi
 }
 #endregion Logging & Banners
