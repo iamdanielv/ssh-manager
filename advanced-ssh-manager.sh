@@ -164,10 +164,6 @@ edit_ssh_host_in_editor() {
     printOkMsg "Host '${host_to_edit}' has been updated from editor."
 }
 
-_setup_environment() {
-    _setup_core_environment "$@"
-}
-
 # --- Main Menu View Helpers ---
 
 _advanced_host_view_draw_footer() {
@@ -251,7 +247,7 @@ main() {
             *) print_usage; echo; printErrMsg "Unknown option: $1"; exit 1 ;;
         esac
     fi
-    _setup_environment "ssh" "awk" "cat" "grep" "rm" "mktemp" "cp" "date"
+    _setup_core_environment "ssh" "awk" "cat" "grep" "rm" "mktemp" "cp" "date"
     main_loop
 }
 
