@@ -278,18 +278,21 @@ _interactive_list_view() {
 
     _draw_list() {
         if [[ $num_options -gt 0 ]]; then
+            local output=""
             for i in "${!menu_options[@]}"; do
-                local pointer=" "; if (( i == current_option )); then pointer="❯"; fi
-                local full_line_content; full_line_content=$(printf "%s %s" "$pointer" "${menu_options[i]}")
-                local formatted_content; formatted_content=$(_format_fixed_width_string "$full_line_content" 70)
-
                 if (( i == current_option )); then
-                    # Re-apply the highlight after every reset code within the string to ensure full-line highlighting.
-                    local highlighted_content="${formatted_content//${T_REVERSE}/}"
-                    highlighted_content="${highlighted_content//${T_RESET}/${T_RESET}${T_HIGHLIGHT}}"
-                    output+="${T_HIGHLIGHT}${highlighted_content}${T_RESET}\n"
+                    # Selected line
+                    local pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"
+                    # Format the line to a fixed width (70 total - 3 for " ❯ ")
+                    local selected_line; selected_line=$(_format_fixed_width_string "${menu_options[i]}" 67)
+                    # Apply full-line highlighting
+                    selected_line="${selected_line//${T_REVERSE}/}"
+                    selected_line="${selected_line//${T_RESET}/${T_RESET}${T_REVERSE}}"
+                    output+=" ${pointer} ${T_REVERSE}${selected_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
                 else
-                    output+="${formatted_content}\n"
+                    # Unselected line: format to fixed width (70 total - 3 for "   ")
+                    local this_line; this_line=$(_format_fixed_width_string "${menu_options[i]}" 67)
+                    output+="   ${this_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
                 fi
             done
             printf '%b' "$output"
@@ -299,8 +302,7 @@ _interactive_list_view() {
     }
 
     _draw_full_view() {
-        clear_screen; printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty
-        printBanner "$banner"; "$header_func"; printMsg "${C_GRAY}${DIV}${T_RESET}"; _draw_list
+        clear_screen; printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty; printBanner "$banner"; "$header_func"; printMsg "${C_GRAY}${DIV}${T_RESET}"; _draw_list
         printMsg "${C_GRAY}${DIV}${T_RESET}"
         local footer_content; footer_content=$("$footer_func")
         footer_lines=$(echo -e "$footer_content" | wc -l)
@@ -331,7 +333,7 @@ _interactive_list_view() {
         elif [[ "$handler_result" == "refresh" ]]; then
             _refresh_data; _draw_full_view
             lines_below_list=$(( footer_lines + 1 )); move_cursor_up "$lines_below_list"
-        elif [[ "$handler_result" == "partial_redraw" ]]; then :
+        elif [[ "$handler_result" == "partial_redraw" ]]; then : # The handler already did the drawing and cursor positioning.
         else move_cursor_up "$list_lines"; _draw_list; fi
     done
 }
