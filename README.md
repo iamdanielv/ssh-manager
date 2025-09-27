@@ -137,11 +137,12 @@ The main script provides a TUI for all your common, day-to-day SSH tasks.
 
 ### `advanced-ssh-manager.sh` (Advanced Tools)
 
-This script provides a focused TUI for more complex or potentially destructive operations.
+This script provides a focused TUI for more complex or potentially destructive operations, accessible via a separate command.
 
 - **Advanced Editing**: Open a specific host's entire configuration block in your `$EDITOR`.
 - **Backup**: Create a timestamped backup of your config file.
 - **Import/Export**: Export selected host configurations to a new file or import them from a file into your main config.
+- **Host Management**: The advanced view also allows for quick access to edit hosts in the editor, backup, import, and export.
 
 ## 🏷️ Tagging and Filtering
 
@@ -158,17 +159,21 @@ To filter the hosts list, press `f` in the main view and enter a tag or part of 
 
 ## 🚀 Quick Actions
 
-**Note:** The following actions apply to the main `ssh-manager.sh` script.
+Bypass the interactive menus for quick, direct actions.
 
-Bypass the interactive menus for quick, direct actions:
+### `ssh-manager.sh`
 
-- `-c, --connect`: Go directly to host selection for connecting.
-- `-a, --add`: Go directly to the 'Add a new server' menu.
-- `-p, --port-forward`: Go directly to the 'Port Forwarding' menu.
-- `-l, --list-hosts`: List all configured hosts and exit.
-- `-f, --list-forwards`: List active port forwards and exit.
-- `-t, --test [host|all]`: Test connection to a specific host, all hosts, or show the selection menu.
-- `-h, --help`: Show the help message.
+-   `-c, --connect`: Go directly to host selection for connecting.
+-   `-a, --add`: Go directly to the 'Add a new server' menu.
+-   `-p, --port-forward`: Go directly to the 'Port Forwarding' menu.
+-   `-l, --list-hosts`: List all configured hosts and exit.
+-   `-f, --list-forwards`: List active port forwards and exit.
+-   `-t, --test [host|all]`: Test connection to a specific host, all hosts, or show the selection menu.
+-   `-h, --help`: Show the help message.
+
+### `advanced-ssh-manager.sh`
+
+-   `-h, --help`: Show the help message.
 
 ## 📦 Installation
 
