@@ -357,7 +357,7 @@ run_single_select_example() {
 run_multi_select_example() {
     clear_screen
     printBanner "Multi-Select Menu Example"
-    local -a options=("All" "Apple" "Banana" "Cherry" "Date")
+    local -a options=("All" "Apple" "Banana" "Cherry" "Date some ${C_RED}really long (with color!)${T_FG_RESET} text that should be ${C_YELLOW}truncated because${T_FG_RESET} it is super long")
     local selected_indices_output
     selected_indices_output=$(interactive_multi_select_menu "Choose your favorite fruits:" "" "${options[@]}")
 
