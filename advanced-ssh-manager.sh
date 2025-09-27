@@ -30,11 +30,24 @@ export_ssh_hosts() {
     get_detailed_ssh_hosts_menu_options menu_options data_payloads
     local menu_output; local header; header=$(printf " %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "user@hostname[:port]")
     menu_output=$(interactive_multi_select_menu "Select hosts to export (space to toggle, enter to confirm):" "$header" "All" "${menu_options[@]}")
-    if [[ $? -ne 0 ]]; then printInfoMsg "Export cancelled."; return; fi
+    if [[ $? -ne 0 ]]; then
+        clear_lines_up 1
+        show_timed_message "${T_INFO_ICON} Export cancelled."
+        return 2 # Signal to run_menu_action to not prompt.
+    fi
     mapfile -t selected_indices < <(echo "$menu_output")
-    if [[ ${#selected_indices[@]} -eq 0 ]]; then printInfoMsg "No hosts selected for export."; return; fi
-    local -a hosts_to_export; for index in "${selected_indices[@]}"; do if (( index > 0 )); then hosts_to_export+=("${hosts[index-1]}"); fi; done
-    local export_file; prompt_for_input "Enter path for export file" export_file "ssh_hosts_export.conf"; local expanded_export_file="${export_file/#\~/$HOME}"
+    if [[ ${#selected_indices[@]} -eq 0 ]]; then
+        show_timed_message "${T_INFO_ICON} No hosts selected for export."
+        return 2 # Signal to run_menu_action to not prompt.
+    fi
+    local -a hosts_to_export
+    for index in "${selected_indices[@]}"; do if (( index > 0 )); then hosts_to_export+=("${hosts[index-1]}"); fi; done
+    local export_file
+    if ! prompt_for_input "Enter path for export file" export_file "ssh_hosts_export.conf"; then
+        # prompt_for_input shows its own cancellation message.
+        return 2 # Signal to run_menu_action to not prompt.
+    fi
+    local expanded_export_file="${export_file/#\~/$HOME}"
     if [[ ${#hosts_to_export[@]} -eq 0 ]]; then printInfoMsg "No hosts selected for export."; return; fi
     true > "$expanded_export_file" # Create/truncate the export file.
     printInfoMsg "Exporting ${#hosts_to_export[@]} host(s)..."
@@ -51,8 +64,11 @@ import_ssh_hosts() {
     printBanner "Import SSH Hosts";
     printMsg "    ${C_YELLOW}ESC${T_RESET} to cancel"
     local import_file
-    prompt_for_input "Enter path of file to import from" import_file
-    [[ $? -ne 0 ]] && return 1 # Handle cancellation
+    if ! prompt_for_input "Enter path of file to import from" import_file; then
+        # prompt_for_input shows its own cancellation message.
+        # Return 2 to signal to run_menu_action to not prompt for a key press.
+        return 2
+    fi
 
     local expanded_import_file="${import_file/#\~/$HOME}"
     if [[ ! -f "$expanded_import_file" ]]; then printErrMsg "Import file not found: ${expanded_import_file/#$HOME/\~}"; return 1; fi
