@@ -1083,6 +1083,9 @@ get_detailed_ssh_hosts_menu_options() {
             local formatted_string; formatted_string=$(printf "%s %s" "$display_alias" "$line1_details")
         else
             # --- Two-Line Display Logic ---
+            local line1_details; line1_details=$(_format_fixed_width_string "$raw_line1_details" 46)
+            local line1; line1=$(printf "%s %s" "$display_alias" "$line1_details")
+
             local key_info=""
             if [[ -n "$current_identityfile" ]]; then
                 key_info="${C_WHITE}(${current_identityfile/#$HOME/\~})"
@@ -1093,9 +1096,6 @@ get_detailed_ssh_hosts_menu_options() {
             if [[ -n "$host_tags" ]]; then
                 tags_info="${C_GRAY}[${host_tags//,/, }]${T_RESET}"
             fi
-
-            local line1_details; line1_details=$(_format_fixed_width_string "$raw_line1_details" 46)
-            local line1; line1=$(printf "%s %s" "$display_alias" "$line1_details")
 
             local line2_details=""
             line2_details=$(echo "${tags_info} ${key_info}" | sed 's/^\s*//;s/\s*$//')
