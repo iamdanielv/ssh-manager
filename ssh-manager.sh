@@ -1026,7 +1026,10 @@ get_detailed_ssh_hosts_menu_options() {
     out_data_payloads_ref=() # Clear the data payload array
 
     if [[ ${#hosts[@]} -eq 0 ]]; then
-        return 0 # Not an error, just no hosts
+        # If there are no hosts at all, ensure output arrays are empty and return.
+        out_array=()
+        out_data_payloads_ref=()
+        return 0
     fi
 
     # If filtering, pre-filter the hosts array
