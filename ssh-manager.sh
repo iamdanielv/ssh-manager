@@ -1132,7 +1132,7 @@ select_ssh_host() {
     fi
 
     local selected_index
-    local header; header=$(printf "  %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "user@hostname[:port]")
+    local header; header=$(printf "%-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "user@hostname[:port]")
     selected_index=$(interactive_menu "single" "$prompt" "$header" "${menu_options[@]}")
     if [[ $? -ne 0 ]]; then printInfoMsg "Operation cancelled."; return 1; fi
 
