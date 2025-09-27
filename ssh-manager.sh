@@ -396,13 +396,12 @@ _handle_footer_toggle() {
         # Clear the old footer area (the footer text + the final bottom divider).
         clear_lines_down $(( old_footer_lines + 1 ))
 
-        # Now, print the new footer and its final bottom divider.
+        # Now, print the new footer.
         "$footer_draw_func"
-        printMsg "${C_GRAY}${DIV}${T_RESET}"
 
         # Move the cursor back to where the main loop expects it (end of list).
-        local new_footer_lines; new_footer_lines=$(echo -e "$("$footer_draw_func")" | wc -l)
-        move_cursor_up $(( new_footer_lines + 2 ))
+        local new_footer_lines; new_footer_lines=$(echo -e "$("$footer_draw_func")" | wc -l) # The +1 is for the divider we removed
+        move_cursor_up $(( new_footer_lines + 1 ))
     } >/dev/tty
 }
 
@@ -637,16 +636,15 @@ _interactive_list_view() {
         printBanner "$banner"; "$header_func"; printMsg "${C_GRAY}${DIV}${T_RESET}"; _draw_list
         printMsg "${C_GRAY}${DIV}${T_RESET}"
         local footer_content; footer_content=$("$footer_func")
-        footer_lines=$(echo -e "$footer_content" | wc -l)
+        footer_lines=$(echo -e "$footer_content" | wc -l) # wc -l is correct here
         printMsg "$footer_content"
-        printMsg "${C_GRAY}${DIV}${T_RESET}"
     }
 
     _refresh_data # Initial data load
     _draw_full_view
 
     # Position cursor for the loop: at the end of the list, before the first bottom divider.
-    local lines_below_list=$(( footer_lines + 2 ))
+    local lines_below_list=$(( footer_lines + 1 )) # Removed one divider
     move_cursor_up "$lines_below_list"
 
     while true; do
@@ -675,7 +673,7 @@ _interactive_list_view() {
         elif [[ "$handler_result" == "refresh" ]]; then
             _refresh_data
             _draw_full_view
-            lines_below_list=$(( footer_lines + 2 ))
+            lines_below_list=$(( footer_lines + 1 )) # Recalculate based on new footer
             move_cursor_up "$lines_below_list"
         elif [[ "$handler_result" == "partial_redraw" ]]; then
             # The handler already did the drawing and cursor positioning.
