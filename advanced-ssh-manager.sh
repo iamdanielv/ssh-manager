@@ -24,8 +24,11 @@ print_usage() {
 export_ssh_hosts() {
     printBanner "Export SSH Hosts"; mapfile -t hosts < <(get_ssh_hosts)
     if [[ ${#hosts[@]} -eq 0 ]]; then printInfoMsg "No hosts found to export."; return; fi
-    local -a menu_options; get_detailed_ssh_hosts_menu_options menu_options
-    local menu_output; local header; header=$(printf "     %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "user@hostname[:port]")
+    # get_detailed_ssh_hosts_menu_options requires two output arrays.
+    # The second one (data_payloads) is not used here, but must be provided.
+    local -a menu_options data_payloads
+    get_detailed_ssh_hosts_menu_options menu_options data_payloads
+    local menu_output; local header; header=$(printf " %-20s ${C_WHITE}%s${T_RESET}" "HOST ALIAS" "user@hostname[:port]")
     menu_output=$(interactive_multi_select_menu "Select hosts to export (space to toggle, enter to confirm):" "$header" "All" "${menu_options[@]}")
     if [[ $? -ne 0 ]]; then printInfoMsg "Export cancelled."; return; fi
     mapfile -t selected_indices < <(echo "$menu_output")
