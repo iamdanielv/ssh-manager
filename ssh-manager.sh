@@ -1223,7 +1223,7 @@ generate_ssh_key() {
 copy_selected_ssh_key() {
     local selected_key="$1"
     printBanner "Copy SSH Key to Server"
-    printInfoMsg "Selected key: ${C_L_BLUE}${selected_key/#$HOME/\~}${T_RESET}"
+    printInfoMsg "key: ${C_L_BLUE}${selected_key/#$HOME/\~}${T_RESET}"
 
     local selected_host
     selected_host=$(select_ssh_host "Select a host to copy this key to:")
