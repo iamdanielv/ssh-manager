@@ -986,7 +986,7 @@ _rename_key_pair() {
 get_detailed_ssh_hosts_menu_options() {
     local -n out_array="$1" # Nameref for the output menu options
     local -n out_data_payloads_ref="$2" # Nameref for the raw host aliases
-    local show_key_info="${3:-true}"
+    local single_line="${3:-false}"
     local filter_tag="${4:-}"
     local -a hosts
     mapfile -t hosts < <(get_ssh_hosts)
@@ -1036,12 +1036,6 @@ get_detailed_ssh_hosts_menu_options() {
         current_identityfile=$(_get_explicit_ssh_config_value "$host_alias" "IdentityFile")
 
         # Clean up identity file path for display
-        local key_info=""
-        if [[ "$show_key_info" == "true" && -n "$current_identityfile" ]]; then
-            # Using #$HOME is safer than a simple string replacement
-            # Color the path white, then switch back to cyan for the closing parenthesis.
-            key_info="${C_WHITE}(${current_identityfile/#$HOME/\~})"
-        fi
 
         # Format port info, only show if not the default port 22
         local port_info=""
@@ -1050,30 +1044,36 @@ get_detailed_ssh_hosts_menu_options() {
             port_info=":${C_L_YELLOW}${current_port}${C_L_CYAN}"
         fi
 
-        local host_tags; host_tags=$(_get_tags_for_host "$host_alias")
-        local tags_info=""
-        if [[ -n "$host_tags" ]]; then
-            tags_info="${C_GRAY}[${host_tags//,/, }]${T_RESET}"
-        fi
-
-        # --- Two-Line Display Logic ---
-        # Line 1: Alias and core connection info
         local raw_line1_details="${C_L_CYAN}${current_user:-?}@${current_hostname:-?}${port_info}${T_RESET}"
-        local line1_details; line1_details=$(_format_fixed_width_string "$raw_line1_details" 46)
-        local line1
-        line1=$(printf "%s %s" "$display_alias" "$line1_details")
 
-        # Line 2: Tags and key info, indented
-        local line2_details=""
-        # Combine tags and key info, trimming any leading/trailing whitespace that might result
-        # if one of them is empty.
-        line2_details=$(echo "${tags_info} ${key_info}" | sed 's/^\s*//;s/\s*$//')
+        if [[ "$single_line" == "true" ]]; then
+            # --- Single-Line Display Logic ---
+            local line1_details; line1_details=$(_format_fixed_width_string "$raw_line1_details" 46)
+            local formatted_string; formatted_string=$(printf "%s %s" "$display_alias" "$line1_details")
+        else
+            # --- Two-Line Display Logic ---
+            local key_info=""
+            if [[ -n "$current_identityfile" ]]; then
+                key_info="${C_WHITE}(${current_identityfile/#$HOME/\~})"
+            fi
 
-        # Truncate the second line to fit within the view's width (approx 70 chars, minus indentation).
-        line2_details=$(_format_fixed_width_string "$line2_details" 67)
-        local formatted_string="$line1"
-        if [[ -n "$line2_details" ]]; then
-            formatted_string+=$'\n'"   ${line2_details}" # space in front to account for >
+            local host_tags; host_tags=$(_get_tags_for_host "$host_alias")
+            local tags_info=""
+            if [[ -n "$host_tags" ]]; then
+                tags_info="${C_GRAY}[${host_tags//,/, }]${T_RESET}"
+            fi
+
+            local line1_details; line1_details=$(_format_fixed_width_string "$raw_line1_details" 46)
+            local line1; line1=$(printf "%s %s" "$display_alias" "$line1_details")
+
+            local line2_details=""
+            line2_details=$(echo "${tags_info} ${key_info}" | sed 's/^\s*//;s/\s*$//')
+            line2_details=$(_format_fixed_width_string "$line2_details" 67)
+
+            formatted_string="$line1"
+            if [[ -n "$line2_details" ]]; then
+                formatted_string+=$'\n'"   ${line2_details}"
+            fi
         fi
         out_data_payloads_ref+=("$host_alias")
         out_array+=("${formatted_string}${T_RESET}")
@@ -1089,11 +1089,11 @@ get_detailed_ssh_hosts_menu_options() {
 #   if [[ $? -eq 0 ]]; then ...
 select_ssh_host() {
     local prompt="$1"
-    local show_key_info="${2:-true}" # This argument is now effectively unused but kept for compatibility
+    local single_line="${2:-false}"
 
     local -a menu_options
     local -a data_payloads
-    get_detailed_ssh_hosts_menu_options menu_options data_payloads "true" "" # No filter
+    get_detailed_ssh_hosts_menu_options menu_options data_payloads "$single_line" "" # No filter
 
     if [[ ${#menu_options[@]} -eq 0 ]]; then
         printInfoMsg "No hosts found in your SSH config file."
@@ -2383,7 +2383,7 @@ _port_forward_editor_field_handler() {
         '2')
             # Edit SSH Host
             clear_current_line
-            local selected_host; selected_host=$(select_ssh_host "Select a new SSH host:" "false")
+            local selected_host; selected_host=$(select_ssh_host "Select a new SSH host:" "true")
             if [[ $? -eq 0 ]]; then new_host="$selected_host"; fi
             ;;
         '3')
@@ -2867,7 +2867,7 @@ _common_host_view_refresh() {
     local -n out_menu_options="$1"
     local -n out_data_payloads="$2"
     # This function now populates both arrays based on the filter.
-    get_detailed_ssh_hosts_menu_options out_menu_options out_data_payloads "true" "${_HOST_VIEW_CURRENT_FILTER:-}"
+    get_detailed_ssh_hosts_menu_options out_menu_options out_data_payloads "false" "${_HOST_VIEW_CURRENT_FILTER:-}"
 }
 
 _host_centric_view_key_handler() {
