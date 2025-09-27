@@ -188,7 +188,7 @@ _format_fixed_width_string() {
     if (( len <= max_len )); then
         # Pad
         local padding_needed=$(( max_len - len ))
-                printf "%s%*s" "$input_str" "$padding_needed" ""
+        printf "%s%*s" "$input_str" "$padding_needed" ""
     else
         # Truncate by calling the dedicated truncation function
         _truncate_string "$input_str" "$max_len" "$trunc_char"
@@ -473,6 +473,14 @@ interactive_menu() {
     local header_lines=0
     if [[ -n "$header" ]]; then header_lines=$(echo -e "$header" | wc -l); fi
 
+    # Calculate the total number of lines the options will render. This is crucial
+    # for correctly redrawing the menu when options contain newlines.
+    local menu_content_lines=0
+    if (( num_options > 0 )); then
+        # Join all array elements with a newline and count the total lines.
+        menu_content_lines=$(printf "%s\n" "${options[@]}" | wc -l)
+    fi
+
     _draw_menu_options() {
         local output=""
         for i in "${!options[@]}"; do
@@ -497,7 +505,7 @@ interactive_menu() {
 
             if [[ "$mode" == "multi" ]]; then
                 local checkbox_text="[ ]"
-                local checkbox_style="${T_RESET}"
+                local checkbox_style=""
                 if (( selected_options[i] == 1 )); then
                     checkbox_text="[✓]"
                     checkbox_style="${C_GREEN}${T_BOLD}"
@@ -507,13 +515,23 @@ interactive_menu() {
                 if [[ "${options[i]}" == "All" ]]; then
                     # this is the "All" option,
                     # pad it so that highlights take up most of the width
-                    option_text=$(printf "%-21s" "${options[i]}")
+                    option_text=$(printf "%-67s" "${options[i]}")
                 fi
                 # The highlight is applied to the whole line. The checkbox style is applied only to the checkbox.
                 # We reset the checkbox style before the option text, then re-apply the main highlight.
-                output+=" ${pointer} ${highlight_start}${checkbox_style}${checkbox_text}${T_RESET}${highlight_start} ${option_text}${T_CLEAR_LINE}${highlight_end}${T_RESET}"$'\n'
+                selected_line="${checkbox_style}${checkbox_text}${T_RESET}${highlight_start}${option_text}${T_CLEAR_LINE}${highlight_end}${T_RESET}"$'\n'
+                if (( i == current_option )); then
+                    selected_line="${selected_line//${T_REVERSE}/}"
+                    selected_line="${selected_line//${T_RESET}/${T_RESET}${T_REVERSE}}"
+                fi
+                output+="${selected_line}${T_RESET}"
             else # single
-                output+=" ${pointer} ${highlight_start} ${options[i]} ${T_CLEAR_LINE}${highlight_end}${T_RESET}"$'\n'
+                selected_line="${pointer} ${highlight_start}${options[i]}${T_CLEAR_LINE}${highlight_end}${T_RESET}"$'\n'
+                if (( i == current_option )); then
+                selected_line="${selected_line//${T_REVERSE}/}"
+                selected_line="${selected_line//${T_RESET}/${T_RESET}${T_REVERSE}}"
+                fi
+                output+="${selected_line}${T_RESET}"
             fi
         done
         printf '%s' "$output"
@@ -534,18 +552,18 @@ interactive_menu() {
     fi
     printf '  %s%s%s Move | %s | %s%s%s to cancel%s\n' "${C_L_CYAN}" "${movement_keys}" "${C_WHITE}" "${select_action}" "${C_L_YELLOW}" "Q/ESC" "${C_GRAY}" "${T_RESET}" >/dev/tty
 
-    move_cursor_up 2 # Move to end of options list
+    move_cursor_up 2 # Move cursor to the end of the options list, before the bottom divider.
 
     # --- Input Loop ---
     local key; local lines_above=$((1 + header_lines)); local lines_below=2
     while true; do
-        move_cursor_up "$num_options"; key=$(read_single_char </dev/tty)
+        move_cursor_up "$menu_content_lines"; key=$(read_single_char </dev/tty)
         case "$key" in
             "$KEY_UP"|"k") current_option=$(( (current_option - 1 + num_options) % num_options ));;
             "$KEY_DOWN"|"j") current_option=$(( (current_option + 1) % num_options ));;
-            "$KEY_ESC"|"q") clear_lines_down $((num_options + lines_below)); clear_lines_up "$lines_above"; return 1;;
+            "$KEY_ESC"|"q") clear_lines_down $((menu_content_lines + lines_below)); clear_lines_up "$lines_above"; return 1;;
             "$KEY_ENTER")
-                clear_lines_down $((num_options + lines_below)); clear_lines_up "$lines_above"
+                clear_lines_down $((menu_content_lines + lines_below)); clear_lines_up "$lines_above"
                 if [[ "$mode" == "multi" ]]; then
                     local has_selection=0
                     for i in "${!options[@]}"; do if [[ ${selected_options[i]} -eq 1 ]]; then has_selection=1; echo "$i"; fi; done
@@ -563,7 +581,7 @@ interactive_menu() {
                         else local all_selected=1; for ((i=1; i<num_options; i++)); do if (( selected_options[i] == 0 )); then all_selected=0; break; fi; done; selected_options[0]=$all_selected; fi
                     fi
                 else # single mode: space selects and exits
-                    clear_lines_down $((num_options + lines_below)); clear_lines_up "$lines_above"
+                    clear_lines_down $((menu_content_lines + lines_below)); clear_lines_up "$lines_above"
                     echo "$current_option"; return 0
                 fi
                 ;;
