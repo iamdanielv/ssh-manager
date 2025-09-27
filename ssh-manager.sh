@@ -1272,17 +1272,18 @@ _inline_remove_ssh_key() {
     # Build the multi-line question for the prompt.
     local pub_key_path="${key_base_path}.pub"
     printBanner "${C_RED}Delete Key${T_RESET}"
-    local question="Are you sure you want to permanently delete this key pair?\n     Private: ${key_base_path/#$HOME/\~}"
+    local question="Are you sure you want to delete this key pair?\n     Private: ${key_base_path/#$HOME/\~}"
     if [[ -f "$pub_key_path" ]]; then question+="\n     Public:  ${pub_key_path/#$HOME/\~}"; fi
+    question+="\n\n${C_L_YELLOW}Note: This will move the key pair to ${C_L_BLUE}${SSH_DIR}/.trash/${T_RESET}"
 
     # Show the prompt in the cleared footer area.
     prompt_yes_no "$question" "n"
     local choice=$?
     if [[ $choice -eq 0 ]]; then
-        run_with_spinner "Deleting key pair..." rm -f "$key_base_path" "$pub_key_path"
+        run_with_spinner "Moving key pair to trash..." _move_key_pair_to_trash "$key_base_path"
         sleep 1
     elif [[ $choice -eq 1 ]]; then
-        printInfoMsg "Key pair was ${C_YELLOW}not deleted${T_RESET}."
+        printInfoMsg "Key pair was ${C_YELLOW}not moved to trash${T_RESET}."
         sleep 1
     fi
 }
@@ -1298,23 +1299,24 @@ delete_ssh_key() {
         return 1
     fi
 
-    local question="Are you sure you want to permanently delete this key pair?\n  Private: ${key_base_path}"
+    local question="Are you sure you want to delete this key pair?\n  Private: ${key_base_path}"
     if [[ -f "$pub_key_path" ]]; then
         question+="\n  Public:  ${pub_key_path}"
     else
         question+="\n  (Public key not found, will only delete private key)"
     fi
+    question+="\n\n${C_L_YELLOW}Note: This will move the key pair to ${C_L_BLUE}${SSH_DIR}/.trash/${T_RESET}"
 
     prompt_yes_no "$question" "n"
     local choice=$?
     if [[ $choice -eq 0 ]]; then
-        if run_with_spinner "Deleting key pair..." rm -f "$key_base_path" "$pub_key_path"; then
-            printOkMsg "Key pair deleted."
+        if run_with_spinner "Moving key pair to trash..." _move_key_pair_to_trash "$key_base_path"; then
+            printOkMsg "Key pair moved to ${C_L_BLUE}${SSH_DIR}/.trash/${T_RESET}"
         else
-            printErrMsg "Failed to delete key pair."
+            printErrMsg "Failed to move key pair to trash."
         fi
     elif [[ $choice -eq 1 ]]; then
-        printInfoMsg "Key pair was ${C_YELLOW}not deleted${T_RESET}."
+        printInfoMsg "Key pair was ${C_YELLOW}not moved to trash${T_RESET}."
     fi
 }
 
@@ -2165,9 +2167,10 @@ _cleanup_orphaned_key() {
     done
 
     # 5. If we get here, the key is not used by any other host. Prompt for deletion.
-    if prompt_yes_no "The key '${key_file_path/#$HOME/\~}' is no longer referenced by any host.\n    Remove it and its .pub file?" "n"; then
-        rm -f "${expanded_key_path}" "${expanded_key_path}.pub"
-        printOkMsg "Removed key files."
+    local question="The key '${key_file_path/#$HOME/\~}' is no longer referenced by any host.\n    Move it and its .pub file to the trash?"
+    if prompt_yes_no "$question" "n"; then
+        _move_key_pair_to_trash "$expanded_key_path"
+        printOkMsg "Moved orphaned key files to ${C_L_BLUE}${SSH_DIR}/.trash/${T_RESET}"
     fi
 }
 
@@ -2249,6 +2252,28 @@ _test_connection_for_host() {
         # run_with_spinner prints the error details from ssh
         printInfoMsg "Check your SSH config, network, firewall rules, and ensure your public key is on the server."
         return 1
+    fi
+}
+
+# (Private) Helper function to move a key pair to the trash directory.
+# This is designed to be called by `run_with_spinner`.
+# It ensures the trash directory exists and moves both private and public keys.
+# Usage: _move_key_pair_to_trash <key_base_path>
+_move_key_pair_to_trash() {
+    local key_base_path="$1"
+    local trash_dir="${SSH_DIR}/.trash"
+    mkdir -p "$trash_dir"
+
+    local key_filename; key_filename=$(basename "$key_base_path")
+    local dest_path="${trash_dir}/${key_filename}"
+
+    # Move the private key
+    mv "$key_base_path" "$dest_path"
+
+    # Move the public key if it exists
+    local pub_key_path="${key_base_path}.pub"
+    if [[ -f "$pub_key_path" ]]; then
+        mv "$pub_key_path" "${dest_path}.pub"
     fi
 }
 
