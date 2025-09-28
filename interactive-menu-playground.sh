@@ -239,11 +239,10 @@ trap 'script_interrupt_handler' INT
 # Usage: _draw_menu_item <is_current> <is_selected> <is_multi_select> <option_text>
 _draw_menu_item() {
     local is_current="$1" is_selected="$2" is_multi_select="$3" option_text="$4"
-    local output=""
 
-    # Determine checkbox and pointer display
+    # --- 1. Determine Prefix (Pointer & Checkbox) ---
     local pointer=" "
-    local checkbox=" " # one space for alignment
+    local checkbox=" " # One space for alignment
     if [[ "$is_multi_select" == "true" ]]; then
         checkbox="_" # Default unchecked state
         if [[ "$is_selected" == "true" ]]; then
@@ -254,48 +253,56 @@ _draw_menu_item() {
         pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"
         if [[ "$is_multi_select" == "true" ]]; then
             # Override color for highlighted checkbox
-            if [[ "$is_selected" == "true" ]]; then checkbox="${C_GREEN}✓${T_RESET}"; else checkbox="_"; fi
+            if [[ "$is_selected" == "true" ]]; then checkbox="${T_BOLD}${C_GREEN}✓${T_RESET}"; else checkbox="_"; fi
         fi
     fi
+    local prefix="${pointer}${checkbox}"
 
-    # Handle single vs. multi-line items
-    if [[ "$option_text" != *$'\n'* ]]; then
-        # --- Single-line item ---
-        local formatted_line; formatted_line=$(_format_fixed_width_string "$option_text" 67)
+    # --- 2. Format and Draw Lines ---
+    local -a lines
+    mapfile -t lines <<< "$option_text"
+    local num_lines=${#lines[@]}
+
+    for j in "${!lines[@]}"; do
+        local line_prefix="│"
+        if (( num_lines == 1 )); then line_prefix="╶";
+        elif (( j == 0 )); then line_prefix="┌";
+        elif (( j == num_lines - 1 )); then line_prefix="└";
+        fi
+
+        local formatted_line
+        formatted_line=$(_format_fixed_width_string "${lines[j]}" 67)
+
+        # Use a different prefix for subsequent lines of a multi-line item
+        local current_prefix="  " # Two spaces for alignment
+        if (( j == 0 )); then current_prefix="$prefix"; fi
+
         if [[ "$is_current" == "true" ]]; then
-            formatted_line="${formatted_line//${T_REVERSE}/}"
-            formatted_line="${formatted_line//${T_FG_RESET}/${C_L_BLUE}}"
-            # formatted_line="${C_L_BLUE}${formatted_line}${T_FG_RESET}"
-            formatted_line="${formatted_line//${T_RESET}/${T_RESET}${C_L_BLUE}${T_REVERSE}}"
-            output+="${pointer}${checkbox}${T_REVERSE}${C_L_BLUE}╶${formatted_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
+            # For the current item, apply reverse video.
+            # To correctly handle items that have their own color resets (${T_RESET})
+            # or foreground resets (${T_FG_RESET}), we perform targeted substitutions.
+            local highlight_restore="${T_RESET}${T_REVERSE}${C_L_BLUE}"
+            local highlighted_content="${formatted_line//${T_RESET}/${highlight_restore}}"
+            # Also handle foreground-only resets.
+            highlighted_content="${highlighted_content//${T_FG_RESET}/${C_L_BLUE}}"
+
+            printf "%s%s%s%s%s%s\n" \
+                "$current_prefix" \
+                "${T_REVERSE}${C_L_BLUE}" \
+                "$line_prefix" \
+                "$highlighted_content" \
+                "${T_CLEAR_LINE}" \
+                "${T_RESET}"
         else
-            output+="${pointer}${checkbox}╶${formatted_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
+            # For non-current items, print as is.
+            printf "%s%s%s%s%s\n" \
+                "$current_prefix" \
+                "$line_prefix" \
+                "$formatted_line" \
+                "${T_CLEAR_LINE}" \
+                "${T_RESET}"
         fi
-    else
-        # --- Multi-line item ---
-        local -a lines; mapfile -t lines <<< "$option_text"
-        for j in "${!lines[@]}"; do
-            local line_prefix="│"
-            if (( j == 0 )); then line_prefix="┌"; fi
-            if (( j == ${#lines[@]} - 1 )); then line_prefix="└"; fi
-            if (( ${#lines[@]} == 1 )); then line_prefix=" "; fi
-
-            local formatted_line; formatted_line=$(_format_fixed_width_string "${lines[j]}" 67)
-            local current_pointer=" "; local current_checkbox=" "
-            if (( j == 0 )); then current_pointer="$pointer"; current_checkbox="$checkbox"; fi
-
-            if [[ "$is_current" == "true" ]]; then
-                formatted_line="${formatted_line//${T_REVERSE}/}"
-                formatted_line="${formatted_line//${T_FG_RESET}/${C_L_BLUE}}"
-                # formatted_line="${C_L_BLUE}${formatted_line}${T_FG_RESET}"
-                formatted_line="${formatted_line//${T_RESET}/${T_RESET}${C_L_BLUE}${T_REVERSE}}"
-                output+="${current_pointer}${current_checkbox}${T_REVERSE}${C_L_BLUE}${line_prefix}${formatted_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
-            else
-                output+="${current_pointer}${current_checkbox}${line_prefix}${formatted_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
-            fi
-        done
-    fi
-    printf '%b' "$output"
+    done
 }
 
 # Generic interactive menu function.
@@ -388,12 +395,13 @@ _interactive_list_view() {
     _draw_list() {
         if [[ $num_options -gt 0 ]]; then
             for i in "${!menu_options[@]}"; do
-                local is_current="false"; if (( i == current_option )); then is_current="true"; fi
-                # _interactive_list_view doesn't have a concept of "selected", so pass false.
+                local is_current="false"
+                if (( i == current_option )); then is_current="true"; fi
+                # A list view is like a single-select menu, so is_selected and is_multi_select are false.
                 _draw_menu_item "$is_current" "false" "false" "${menu_options[i]}"
             done
         else
-            printf "  %b" "${C_YELLOW}(No items found)${T_CLEAR_LINE}${T_RESET}\n"
+            printf "  %s\n" "${C_GRAY}(No items found.)${T_CLEAR_LINE}${T_RESET}"
         fi
     }
 
