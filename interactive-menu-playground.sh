@@ -564,7 +564,15 @@ _list_view_example_key_handler() {
                 local footer_line_count; footer_line_count=$(echo -e "$footer_content" | wc -l)
 
                 _clear_list_view_footer "$footer_line_count"
-                show_timed_message "${T_INFO_ICON} Refreshing data..." 0.5
+
+                # Randomly show a single or multi-line message to test redraw robustness.
+                local single_line_msg="${T_INFO_ICON} Refreshing data..."
+                local multi_line_msg="${T_INFO_ICON} Refreshing data...\n${C_GRAY}This may take a moment.${T_RESET}\n${C_L_BLUE}Please wait...${T_RESET}"
+                if (( RANDOM % 2 == 0 )); then
+                    show_timed_message "$single_line_msg" 1
+                else
+                    show_timed_message "$multi_line_msg" 1.5
+                fi
 
                 # From the start of the footer area, move up and clear the old list and its bottom divider.
                 # This leaves the cursor at the start of the now-cleared list area.
