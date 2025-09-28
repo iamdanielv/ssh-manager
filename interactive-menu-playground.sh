@@ -173,23 +173,18 @@ show_timed_message() {
 
 # (Private) Clears the footer area of an interactive list view.
 # The cursor is expected to be at the end of the list content (before the divider).
-# The function leaves the cursor at the start of the now-cleared footer area.
-# Usage: _clear_list_view_footer <footer_draw_func_name>
+# It leaves the cursor at the start of the now-cleared footer area.
+# Usage: _clear_list_view_footer <footer_line_count>
 _clear_list_view_footer() {
-    local footer_draw_func="$1"
+    local footer_lines="$1"
 
     # The cursor is at the end of the list content.
     # Move down one line to be past the list's bottom divider.
     printf '\n' >/dev/tty
 
-    # Calculate how many lines the footer is currently using by calling its draw function.
-    local footer_content; footer_content=$("$footer_draw_func")
-    local footer_lines; footer_lines=$(echo -e "$footer_content" | wc -l)
-
     # The area to clear is the footer text + the final bottom divider line.
     local lines_to_clear=$(( footer_lines + 1 ))
     clear_lines_down "$lines_to_clear" >/dev/tty
-
     # The cursor is now at the start of where the footer text was, ready for new output.
 }
 
@@ -202,8 +197,8 @@ _handle_footer_toggle() {
     local -n is_expanded_ref="$2" # Nameref to the state variable
 
     {
-        local old_footer_content; old_footer_content=$("$footer_draw_func")
-        local old_footer_lines; old_footer_lines=$(echo -e "$old_footer_content" | wc -l)
+        local old_footer_content; old_footer_content=$("$footer_draw_func") # Capture old footer
+        local old_footer_line_count; old_footer_line_count=$(echo -e "$old_footer_content" | wc -l)
 
         # Toggle the state
         is_expanded_ref=$(( 1 - is_expanded_ref ))
@@ -213,13 +208,14 @@ _handle_footer_toggle() {
         printf '\n'
 
         # Clear the old footer area (the footer text + the final bottom divider).
-        clear_lines_down $(( old_footer_lines + 1 ))
+        clear_lines_down $(( old_footer_line_count + 1 ))
 
         # Now, print the new footer.
-        "$footer_draw_func"
+        local new_footer_content; new_footer_content=$("$footer_draw_func") # Capture new footer
+        printMsg "$new_footer_content"
 
         # Move the cursor back to where the main loop expects it (end of list).
-        local new_footer_lines; new_footer_lines=$(echo -e "$("$footer_draw_func")" | wc -l) # The +1 is for the divider we removed
+        local new_footer_lines; new_footer_lines=$(echo -e "$new_footer_content" | wc -l) # The +1 is for the divider we removed
         move_cursor_up $(( new_footer_lines + 1 ))
     } >/dev/tty
 }
@@ -551,12 +547,29 @@ _list_view_example_key_handler() {
             out_result="partial_redraw"
             ;;
         'r'|'R')
-            # Perform a partial refresh to avoid full-screen flicker.
-            # The cursor is at the end of the list. Clear the footer area below it.
-            _clear_list_view_footer "_list_view_example_footer"
-            # Show a timed message in the now-cleared footer area.
-            show_timed_message "${T_INFO_ICON} Refreshing data..." 1
-            out_result="refresh"
+            # Perform a partial refresh.
+            {
+                local footer_content; footer_content=$(_list_view_example_footer)
+                local footer_line_count; footer_line_count=$(echo -e "$footer_content" | wc -l)
+                # The cursor is at the end of the list.
+                # 1. Clear the old footer.
+                _clear_list_view_footer "$footer_line_count"
+                # 2. Show a timed message in the cleared footer area.
+                show_timed_message "${T_INFO_ICON} Refreshing data..." 0.5
+                # 3. Move up to the start of the list and clear it.
+                move_cursor_up $(( list_lines + 1 )) # +1 to account for the newline in _clear_list_view_footer
+                clear_lines_down "$list_lines" # Clear the exact number of lines the old list occupied
+                # 4. Refresh the data and redraw the list and footer in place.
+                _refresh_data
+                _draw_list
+                printMsg "${C_GRAY}${DIV}${T_RESET}"
+                printMsg "$footer_content"
+                # 5. Reposition the cursor where the main loop expects it:
+                #    at the end of the list, before the bottom divider.
+                # The new footer has the same height as the old one in this case.
+                move_cursor_up $(( footer_line_count + 1 ))
+            } >/dev/tty
+            out_result="partial_redraw" # Signal that we've handled the drawing.
             ;;
         "$KEY_ENTER")
             if [[ -n "$selected_payload" ]]; then
