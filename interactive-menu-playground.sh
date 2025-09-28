@@ -232,6 +232,48 @@ trap 'script_interrupt_handler' INT
 
 #region Interactive Menus
 
+# (Private) Applies a reverse-video highlight to a string, correctly handling
+# any existing ANSI color codes within it.
+# Usage: highlighted_string=$(_apply_highlight "my ${C_RED}colored${T_RESET} string")
+_apply_highlight() {
+    local content="$1"
+    # To correctly handle items that have their own color resets (${T_RESET})
+    # or foreground resets (${T_FG_RESET}), we perform targeted substitutions.
+    # This ensures the background remains highlighted across the entire line.
+    local highlight_restore="${T_RESET}${T_REVERSE}${C_L_BLUE}"
+    local highlighted_content="${content//${T_RESET}/${highlight_restore}}"
+    # Also handle foreground-only resets.
+    highlighted_content="${highlighted_content//${T_FG_RESET}/${C_L_BLUE}}"
+
+    printf "%s%s%s%s" \
+        "${T_REVERSE}${C_L_BLUE}" \
+        "$highlighted_content" \
+        "${T_CLEAR_LINE}" \
+        "${T_RESET}"
+}
+
+# (Private) Gets the appropriate prefix for a menu item.
+# Handles pointers and multi-select checkboxes.
+# Usage: prefix=$(_get_menu_item_prefix <is_current> <is_selected> <is_multi_select>)
+_get_menu_item_prefix() {
+    local is_current="$1" is_selected="$2" is_multi_select="$3"
+
+    local pointer=" "
+    if [[ "$is_current" == "true" ]]; then
+        pointer="${T_BOLD}${C_L_MAGENTA}❯${T_FG_RESET}"
+    fi
+
+    local checkbox=" " # One space for alignment in single-select mode
+    if [[ "$is_multi_select" == "true" ]]; then
+        checkbox="_" # Default unchecked state
+        if [[ "$is_selected" == "true" ]]; then
+            checkbox="${T_BOLD}${C_GREEN}✓${T_FG_RESET}"
+        fi
+    fi
+
+    echo "${pointer}${checkbox}"
+}
+
 # (Private) Draws a single item for an interactive menu or list.
 # This function encapsulates the complex logic for single-line, multi-line,
 # and highlighted rendering, promoting DRY principles.
@@ -240,26 +282,10 @@ trap 'script_interrupt_handler' INT
 _draw_menu_item() {
     local is_current="$1" is_selected="$2" is_multi_select="$3" option_text="$4"
 
-    # --- 1. Determine Prefix (Pointer & Checkbox) ---
-    local pointer=" "
-    local checkbox=" " # One space for alignment
-    if [[ "$is_multi_select" == "true" ]]; then
-        checkbox="_" # Default unchecked state
-        if [[ "$is_selected" == "true" ]]; then
-            checkbox="${T_BOLD}${C_GREEN}✓${T_RESET}"
-        fi
-    fi
-    if [[ "$is_current" == "true" ]]; then
-        pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"
-        if [[ "$is_multi_select" == "true" ]]; then
-            # Override color for highlighted checkbox
-            if [[ "$is_selected" == "true" ]]; then checkbox="${T_BOLD}${C_GREEN}✓${T_RESET}"; else checkbox="_"; fi
-        fi
-    fi
-    local prefix="${pointer}${checkbox}"
+    local prefix; prefix=$(_get_menu_item_prefix "$is_current" "$is_selected" "$is_multi_select")
 
     # --- 2. Format and Draw Lines ---
-    local -a lines
+    local -a lines=()
     mapfile -t lines <<< "$option_text"
     local num_lines=${#lines[@]}
 
@@ -270,29 +296,17 @@ _draw_menu_item() {
         elif (( j == num_lines - 1 )); then line_prefix="└";
         fi
 
-        local formatted_line
-        formatted_line=$(_format_fixed_width_string "${lines[j]}" 67)
+        local formatted_line; formatted_line=$(_format_fixed_width_string "${lines[j]}" 67)
 
         # Use a different prefix for subsequent lines of a multi-line item
         local current_prefix="  " # Two spaces for alignment
         if (( j == 0 )); then current_prefix="$prefix"; fi
 
         if [[ "$is_current" == "true" ]]; then
-            # For the current item, apply reverse video.
-            # To correctly handle items that have their own color resets (${T_RESET})
-            # or foreground resets (${T_FG_RESET}), we perform targeted substitutions.
-            local highlight_restore="${T_RESET}${T_REVERSE}${C_L_BLUE}"
-            local highlighted_content="${formatted_line//${T_RESET}/${highlight_restore}}"
-            # Also handle foreground-only resets.
-            highlighted_content="${highlighted_content//${T_FG_RESET}/${C_L_BLUE}}"
-
-            printf "%s%s%s%s%s%s\n" \
+            local highlighted_line; highlighted_line=$(_apply_highlight "${line_prefix}${formatted_line}")
+            printf "%s%s\n" \
                 "$current_prefix" \
-                "${T_REVERSE}${C_L_BLUE}" \
-                "$line_prefix" \
-                "$highlighted_content" \
-                "${T_CLEAR_LINE}" \
-                "${T_RESET}"
+                "$highlighted_line"
         else
             # For non-current items, print as is.
             printf "%s%s%s%s%s\n" \
@@ -468,7 +482,7 @@ run_single_select_example() {
 run_multi_select_example() {
     clear_screen
     printBanner "Multi-Select Menu Example"
-    local -a options=("All" "Apple" "Banana"$'\n'"A tasty yellow fruit" "Cherry" "Date some ${C_RED}really long (with color!)${T_RESET} text that should be ${C_YELLOW}truncated because${T_RESET} it is super long")
+    local -a options=("All" "Apple" "Banana"$'\n'"A tasty yellow fruit" "Cherry" "Date some ${C_RED}really long (with color!)${T_FG_RESET} text that should be ${C_YELLOW}truncated because${T_FG_RESET} it is super long")
     local selected_indices_output
     selected_indices_output=$(interactive_multi_select_menu "Choose your favorite fruits:" "" "${options[@]}")
 
