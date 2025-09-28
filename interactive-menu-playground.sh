@@ -185,7 +185,7 @@ interactive_menu() {
     fi
 
     _draw_menu_options() {
-        local output=""; local total_width=70
+        local output=""; local total_width=70; local multi_line_width=66
         for i in "${!options[@]}"; do
             local is_current=$(( i == current_option ))
             local option_text="${options[i]}"
@@ -213,7 +213,6 @@ interactive_menu() {
                 # --- Multi-line item (contains newlines) ---
                 local -a lines; mapfile -t lines <<< "$option_text"
                 local num_lines=${#lines[@]}
-                local line_width=$(( total_width - 4 )) # Account for the box-drawing character and checkbox
 
                 for j in "${!lines[@]}"; do
                     local line_prefix="│"; local pointer=" "; local checkbox_text="  "
@@ -225,7 +224,7 @@ interactive_menu() {
                         checkbox_text="_ "; if (( selected_options[i] == 1 )); then checkbox_text="${T_BOLD}${C_GREEN}✓${T_FG_RESET} "; fi
                     fi
 
-                    local formatted_line; formatted_line=$(_format_fixed_width_string "${lines[j]}" "$line_width")
+                    local formatted_line; formatted_line=$(_format_fixed_width_string "${lines[j]}" "$multi_line_width")
 
                     if (( is_current )); then
                         if (( j == 0 )); then
@@ -335,7 +334,7 @@ _interactive_list_view() {
                     # --- Multi-line item (contains newlines) ---
                     local -a lines; mapfile -t lines <<< "$option_text"
                     local num_lines=${#lines[@]}
-                    local line_width=$(( total_width - 3 )) # Account for the pointer/spacing (2) and box-drawing character (1)
+                    local line_width=67 # total_width (70) - 3 (pointer/space + box char)
 
                     for j in "${!lines[@]}"; do
                         local line_prefix="│"
