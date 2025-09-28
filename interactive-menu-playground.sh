@@ -201,9 +201,9 @@ _draw_menu_item() {
             formatted_line="${formatted_line//${T_FG_RESET}/${C_L_BLUE}}"
             # formatted_line="${C_L_BLUE}${formatted_line}${T_FG_RESET}"
             formatted_line="${formatted_line//${T_RESET}/${T_RESET}${C_L_BLUE}${T_REVERSE}}"
-            output+="${pointer}${checkbox}${T_REVERSE}${C_L_BLUE} ${formatted_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
+            output+="${pointer}${checkbox}${T_REVERSE}${C_L_BLUE}╶${formatted_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
         else
-            output+="${pointer}${checkbox} ${formatted_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
+            output+="${pointer}${checkbox}╶${formatted_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
         fi
     else
         # --- Multi-line item ---
