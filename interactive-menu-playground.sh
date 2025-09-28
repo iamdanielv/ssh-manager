@@ -166,6 +166,72 @@ trap 'script_interrupt_handler' INT
 
 #region Interactive Menus
 
+# (Private) Draws a single item for an interactive menu or list.
+# This function encapsulates the complex logic for single-line, multi-line,
+# and highlighted rendering, promoting DRY principles.
+#
+# Usage: _draw_menu_item <is_current> <is_selected> <is_multi_select> <option_text>
+_draw_menu_item() {
+    local is_current="$1" is_selected="$2" is_multi_select="$3" option_text="$4"
+    local output=""
+
+    # Determine checkbox and pointer display
+    local pointer=" "
+    local checkbox=" " # one space for alignment
+    if [[ "$is_multi_select" == "true" ]]; then
+        checkbox="_" # Default unchecked state
+        if [[ "$is_selected" == "true" ]]; then
+            checkbox="${T_BOLD}${C_GREEN}✓${T_RESET}"
+        fi
+    fi
+    if [[ "$is_current" == "true" ]]; then
+        pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"
+        if [[ "$is_multi_select" == "true" ]]; then
+            # Override color for highlighted checkbox
+            if [[ "$is_selected" == "true" ]]; then checkbox="${C_GREEN}✓${T_RESET}"; else checkbox="_"; fi
+        fi
+    fi
+
+    # Handle single vs. multi-line items
+    if [[ "$option_text" != *$'\n'* ]]; then
+        # --- Single-line item ---
+        local formatted_line; formatted_line=$(_format_fixed_width_string "$option_text" 67)
+        if [[ "$is_current" == "true" ]]; then
+            formatted_line="${formatted_line//${T_REVERSE}/}"
+            formatted_line="${formatted_line//${T_FG_RESET}/${C_L_BLUE}}"
+            # formatted_line="${C_L_BLUE}${formatted_line}${T_FG_RESET}"
+            formatted_line="${formatted_line//${T_RESET}/${T_RESET}${C_L_BLUE}${T_REVERSE}}"
+            output+="${pointer}${checkbox}${T_REVERSE}${C_L_BLUE} ${formatted_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
+        else
+            output+="${pointer}${checkbox} ${formatted_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
+        fi
+    else
+        # --- Multi-line item ---
+        local -a lines; mapfile -t lines <<< "$option_text"
+        for j in "${!lines[@]}"; do
+            local line_prefix="│"
+            if (( j == 0 )); then line_prefix="┌"; fi
+            if (( j == ${#lines[@]} - 1 )); then line_prefix="└"; fi
+            if (( ${#lines[@]} == 1 )); then line_prefix=" "; fi
+
+            local formatted_line; formatted_line=$(_format_fixed_width_string "${lines[j]}" 67)
+            local current_pointer=" "; local current_checkbox=" "
+            if (( j == 0 )); then current_pointer="$pointer"; current_checkbox="$checkbox"; fi
+
+            if [[ "$is_current" == "true" ]]; then
+                formatted_line="${formatted_line//${T_REVERSE}/}"
+                formatted_line="${formatted_line//${T_FG_RESET}/${C_L_BLUE}}"
+                # formatted_line="${C_L_BLUE}${formatted_line}${T_FG_RESET}"
+                formatted_line="${formatted_line//${T_RESET}/${T_RESET}${C_L_BLUE}${T_REVERSE}}"
+                output+="${current_pointer}${current_checkbox}${T_REVERSE}${C_L_BLUE}${line_prefix}${formatted_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
+            else
+                output+="${current_pointer}${current_checkbox}${line_prefix}${formatted_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
+            fi
+        done
+    fi
+    printf '%b' "$output"
+}
+
 # Generic interactive menu function.
 interactive_menu() {
     local mode="$1"; local prompt="$2"; local header="$3"; shift 3; local -a options=("$@")
@@ -185,66 +251,12 @@ interactive_menu() {
     fi
 
     _draw_menu_options() {
-        local output=""; local total_width=70; local multi_line_width=66
         for i in "${!options[@]}"; do
-            local is_current=$(( i == current_option ))
-            local option_text="${options[i]}"
-
-            if [[ "$option_text" != *$'\n'* ]]; then
-                # --- Single-line item (no newlines) ---
-                local pointer=" "; local checkbox_text="  "
-                if [[ "$mode" == "multi" ]]; then checkbox_text="_ "; if (( selected_options[i] == 1 )); then checkbox_text="${T_BOLD}${C_GREEN}✓${T_FG_RESET} "; fi; fi
-
-                if (( is_current )); then
-                    pointer="${T_BOLD}${C_L_MAGENTA}❯${T_FG_RESET}"
-                    if [[ "$mode" == "multi" ]]; then checkbox_text="_ "; if (( selected_options[i] == 1 )); then checkbox_text="${C_GREEN}✓${T_FG_RESET} "; fi; fi
-                    local formatted_line; formatted_line=$(_format_fixed_width_string "$option_text" 67)
-                    formatted_line="${formatted_line//${T_REVERSE}/}"
-                    # any time we reset the FG color, we will replace with blue
-                    formatted_line="${formatted_line//${T_FG_RESET}/${C_BLUE}}"
-                    formatted_line="${C_L_BLUE}${formatted_line}${T_FG_RESET}"
-                    formatted_line="${formatted_line//${T_RESET}/${T_RESET}${C_BLUE}${T_REVERSE}}"
-                    output+="${pointer}${checkbox_text}${T_REVERSE}${formatted_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
-                else
-                    local formatted_line; formatted_line=$(_format_fixed_width_string "$option_text" 67)
-                    output+="${pointer}${checkbox_text}${formatted_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
-                fi
-            else
-                # --- Multi-line item (contains newlines) ---
-                local -a lines; mapfile -t lines <<< "$option_text"
-                local num_lines=${#lines[@]}
-
-                for j in "${!lines[@]}"; do
-                    local line_prefix="│"; local pointer=" "; local checkbox_text="  "
-                    if (( j == 0 )); then line_prefix="┌"; fi
-                    if (( j == num_lines - 1 )); then line_prefix="└"; fi
-                    if (( num_lines == 1 )); then line_prefix=" "; fi # A single line with a trailing \n
-
-                    if [[ "$mode" == "multi" && j -eq 0 ]]; then
-                        checkbox_text="_ "; if (( selected_options[i] == 1 )); then checkbox_text="${T_BOLD}${C_GREEN}✓${T_FG_RESET} "; fi
-                    fi
-
-                    local formatted_line; formatted_line=$(_format_fixed_width_string "${lines[j]}" "$multi_line_width")
-
-                    if (( is_current )); then
-                        if (( j == 0 )); then
-                            pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"
-                            if [[ "$mode" == "multi" ]]; then if (( selected_options[i] == 1 )); then checkbox_text="${C_GREEN}✓${T_FG_RESET} "; else checkbox_text="_ "; fi; fi
-                        fi
-                        formatted_line="${formatted_line//${T_REVERSE}/}"
-                        # any time we reset the FG color, we will replace with blue
-                        formatted_line="${formatted_line//${T_FG_RESET}/${C_BLUE}}"
-                        formatted_line="${C_L_BLUE}${formatted_line}${T_FG_RESET}"
-                        formatted_line="${formatted_line//${T_RESET}/${T_RESET}${T_REVERSE}${C_BLUE}}"
-                        output+="${pointer}${checkbox_text}${T_REVERSE}${line_prefix}${formatted_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
-                    else
-                        output+=" ${checkbox_text}${line_prefix}${formatted_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
-                    fi
-                done
-            fi
+            local is_current="false"; if (( i == current_option )); then is_current="true"; fi
+            local is_selected="false"; if [[ "$mode" == "multi" && ${selected_options[i]} -eq 1 ]]; then is_selected="true"; fi
+            local is_multi="false"; if [[ "$mode" == "multi" ]]; then is_multi="true"; fi
+            _draw_menu_item "$is_current" "$is_selected" "$is_multi" "${options[i]}"
         done
-        # Use printf with %b to correctly interpret color codes
-        printf '%b' "${output}"
     }
 
     printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty; trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty' EXIT
@@ -309,56 +321,11 @@ _interactive_list_view() {
 
     _draw_list() {
         if [[ $num_options -gt 0 ]]; then
-            local output=""
-            local total_width=70 # Total width of the menu area
             for i in "${!menu_options[@]}"; do
-                local is_current=$(( i == current_option ))
-                local option_text="${menu_options[i]}"
-
-                if [[ "$option_text" != *$'\n'* ]]; then
-                    # --- Single-line item (no newlines) ---
-                    local pointer_prefix="   " # 3 chars
-                    if (( is_current )); then
-                        pointer_prefix=" ${T_BOLD}${C_L_MAGENTA}❯${T_FG_RESET} " # 3 chars: space, pointer, space
-                        local formatted_line; formatted_line=$(_format_fixed_width_string "$option_text" 67) # 70 - 3
-                        formatted_line="${formatted_line//${T_REVERSE}/}"
-                        formatted_line="${formatted_line//${T_FG_RESET}/${C_BLUE}}" # Ensure reset goes to blue for highlight
-                        formatted_line="${C_L_BLUE}${formatted_line}${T_FG_RESET}" # Apply blue color
-                        formatted_line="${formatted_line//${T_RESET}/${T_RESET}${C_BLUE}${T_REVERSE}}"
-                        output+="${pointer_prefix}${T_REVERSE}${formatted_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
-                    else
-                        local formatted_line; formatted_line=$(_format_fixed_width_string "$option_text" 67) # 70 - 3
-                        output+="${pointer_prefix}${formatted_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
-                    fi
-                else
-                    # --- Multi-line item (contains newlines) ---
-                    local -a lines; mapfile -t lines <<< "$option_text"
-                    local num_lines=${#lines[@]}
-                    local line_width=67 # total_width (70) - 3 (pointer/space + box char)
-
-                    for j in "${!lines[@]}"; do
-                        local line_prefix="│"
-                        local pointer_prefix="  " # Default for unselected or subsequent lines (2 chars)
-                        if (( j == 0 )); then line_prefix="┌"; fi
-                        if (( j == num_lines - 1 )); then line_prefix="└"; fi
-                        if (( num_lines == 1 )); then line_prefix=" "; fi # Should not happen if it contains newlines, but for safety
-
-                        local formatted_line; formatted_line=$(_format_fixed_width_string "${lines[j]}" "$line_width")
-
-                        if (( is_current )); then
-                            if (( j == 0 )); then pointer_prefix=" ${T_BOLD}${C_L_MAGENTA}❯${T_RESET}${T_FG_RESET}"; fi # " ❯" for the first line (2 chars)
-                            formatted_line="${formatted_line//${T_REVERSE}/}"
-                            formatted_line="${formatted_line//${T_FG_RESET}/${C_BLUE}}" # Ensure reset goes to blue for highlight
-                            formatted_line="${C_L_BLUE}${formatted_line}${T_FG_RESET}" # Apply blue color
-                            formatted_line="${formatted_line//${T_RESET}/${T_RESET}${T_REVERSE}${C_BLUE}}"
-                            output+="${pointer_prefix}${T_REVERSE}${line_prefix}${formatted_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
-                        else
-                            output+="${pointer_prefix}${line_prefix}${formatted_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
-                        fi
-                    done
-                fi
+                local is_current="false"; if (( i == current_option )); then is_current="true"; fi
+                # _interactive_list_view doesn't have a concept of "selected", so pass false.
+                _draw_menu_item "$is_current" "false" "false" "${menu_options[i]}"
             done
-            printf '%b' "$output"
         else
             printf "  %b" "${C_YELLOW}(No items found)${T_CLEAR_LINE}${T_RESET}\n"
         fi
@@ -410,7 +377,7 @@ run_single_select_example() {
     local -a options=(
         "Option A"
         "Option B"$'\n'"Something ${C_GREEN}else${T_RESET} goes here"
-        "Option C (with a long ${C_YELLOW}description${T_FG_RESET} that might need wrapping or truncation)"
+        "Option C (with a long ${C_YELLOW}description${T_RESET} that might need wrapping or truncation)"
         "Option D"$'\n'"This is line 2"$'\n'"This is line 3"
     )
     local selected_index
@@ -427,7 +394,7 @@ run_single_select_example() {
 run_multi_select_example() {
     clear_screen
     printBanner "Multi-Select Menu Example"
-    local -a options=("All" "Apple" "Banana"$'\n'"A tasty yellow fruit" "Cherry" "Date some ${C_RED}really long (with color!)${T_FG_RESET} text that should be ${C_YELLOW}truncated because${T_FG_RESET} it is super long")
+    local -a options=("All" "Apple" "Banana"$'\n'"A tasty yellow fruit" "Cherry" "Date some ${C_RED}really long (with color!)${T_RESET} text that should be ${C_YELLOW}truncated because${T_RESET} it is super long")
     local selected_indices_output
     selected_indices_output=$(interactive_multi_select_menu "Choose your favorite fruits:" "" "${options[@]}")
 
@@ -483,13 +450,13 @@ _list_view_example_refresh() {
         # The 'status' variable contains its own T_RESET, which will now be handled correctly by the new logic.
         if (( i == 2 )); then # Make the "Degraded" item multi-line for testing
             out_data_payloads+=("$id|$name|$status")
-            out_menu_options+=("ID: $id"$'\n'" Name: ${C_L_CYAN}${name}${T_FG_RESET}"$'\n'" Status: ${status}")
+            out_menu_options+=("ID: $id"$'\n'" Name: ${C_L_CYAN}${name}${T_RESET}"$'\n'" Status: ${status}")
         elif (( i == 5 )); then # Make the "zeta" item multi-line with long lines
             out_data_payloads+=("$id|$name|$status")
-            out_menu_options+=("ID: $id - This is a very long first line that will need to be truncated for sure."$'\n'" Name: ${C_L_CYAN}${name}${T_FG_RESET} - This is another very long line that will also be truncated."$'\n'" Status: ${status} - And a final long line for good measure to test truncation.")
+            out_menu_options+=("ID: $id - This is a very long first line that will need to be truncated for sure."$'\n'" Name: ${C_L_CYAN}${name}${T_RESET} - This is another very long line that will also be truncated."$'\n'" Status: ${status} - And a final long line for good measure to test truncation.")
         else
             out_data_payloads+=("$id|$name|$status")
-            out_menu_options+=("ID: $id | Name: ${C_L_CYAN}${name}${T_FG_RESET} | Status: ${status}")
+            out_menu_options+=("ID: $id | Name: ${C_L_CYAN}${name}${T_RESET} | Status: ${status}")
         fi
     done
 }
@@ -556,8 +523,8 @@ main() {
         # printMsg "${T_QST_ICON} Some ${C_RED}red${T_RESET} text with a qst goes here"
 
         local -a main_menu_options=(
-            "Run ${C_RED}Single-Select${T_FG_RESET} Menu Example"
-            "Run ${C_GREEN}Multi-Select${T_FG_RESET} Menu Example"
+            "Run ${C_RED}Single-Select${T_RESET} Menu Example"
+            "Run ${C_GREEN}Multi-Select${T_RESET} Menu Example"
             "Run Interactive List View Example"
             "Run format_menu_lines Example"
             "Exit Playground"
@@ -578,8 +545,8 @@ main() {
             3) run_format_menu_lines_example ;;
             4)
                 local -a main_menu_options=(
-                    "Run ${C_RED}Single-Select${T_FG_RESET} Menu Example"
-                    "Run ${C_GREEN}Multi-Select${T_FG_RESET} Menu Example"
+                    "Run ${C_RED}Single-Select${T_RESET} Menu Example"
+                    "Run ${C_GREEN}Multi-Select${T_RESET} Menu Example"
                     "Run Interactive List View Example"
                     "Run format_menu_lines Example"
                     "Exit Playground"
