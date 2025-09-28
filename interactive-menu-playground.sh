@@ -566,9 +566,9 @@ _list_view_example_key_handler() {
                 _clear_list_view_footer "$footer_line_count"
                 show_timed_message "${T_INFO_ICON} Refreshing data..." 0.5
 
-                # Move up to the start of the list area and clear it downwards.
-                move_cursor_up $(( old_list_lines + 1 )) # +1 to account for the newline from _clear_list_view_footer
-                clear_lines_down "$old_list_lines"
+                # From the start of the footer area, move up and clear the old list and its bottom divider.
+                # This leaves the cursor at the start of the now-cleared list area.
+                clear_lines_up $(( old_list_lines + 1 )) # +1 for the divider line
 
                 # Refresh data and redraw the list and footer in the now-cleared space.
                 _refresh_data
