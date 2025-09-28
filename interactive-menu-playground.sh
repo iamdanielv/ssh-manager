@@ -551,7 +551,10 @@ _list_view_example_key_handler() {
             out_result="partial_redraw"
             ;;
         'r'|'R')
-            show_timed_message "${T_INFO_ICON} Refreshing data..." 0.5
+            # we are at the bottom of the list, go down one line
+            printMsg ""
+            clear_current_line
+            show_timed_message "${T_INFO_ICON} Refreshing data..." 1.5
             out_result="refresh"
             ;;
         "$KEY_ENTER")
