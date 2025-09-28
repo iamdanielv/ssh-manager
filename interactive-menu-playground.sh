@@ -153,6 +153,76 @@ prompt_to_continue() {
     read_single_char >/dev/null </dev/tty
     clear_lines_up 1
 }
+
+# Prints a message for a fixed duration, then clears it. Does not wait for user input.
+# Useful for brief status updates that don't require user acknowledgement.
+# Usage: show_timed_message "My message" [duration]
+show_timed_message() {
+    local message="$1"
+    local duration="${2:-1.5}"
+
+    # Calculate how many lines the message will take up to clear it correctly.
+    # This is important for multi-line messages (e.g., from terminal wrapping).
+    local message_lines; message_lines=$(echo -e "$message" | wc -l)
+
+    printMsg "$message" >/dev/tty
+    sleep "$duration"
+    # Also redirect to /dev/tty to ensure it works when stdout is captured.
+    clear_lines_up "$message_lines" >/dev/tty
+}
+
+# (Private) Clears the footer area of an interactive list view.
+# The cursor is expected to be at the end of the list content (before the divider).
+# The function leaves the cursor at the start of the now-cleared footer area.
+# Usage: _clear_list_view_footer <footer_draw_func_name>
+_clear_list_view_footer() {
+    local footer_draw_func="$1"
+
+    # The cursor is at the end of the list content.
+    # Move down one line to be past the list's bottom divider.
+    printf '\n' >/dev/tty
+
+    # Calculate how many lines the footer is currently using by calling its draw function.
+    local footer_content; footer_content=$("$footer_draw_func")
+    local footer_lines; footer_lines=$(echo -e "$footer_content" | wc -l)
+
+    # The area to clear is the footer text + the final bottom divider line.
+    local lines_to_clear=$(( footer_lines + 1 ))
+    clear_lines_down "$lines_to_clear" >/dev/tty
+
+    # The cursor is now at the start of where the footer text was, ready for new output.
+}
+
+# (Private) Handles the common keypress logic for toggling an expanded footer in a list view.
+# It assumes the cursor is at the end of the list content, before the divider.
+# It uses a nameref to modify the caller's state variable.
+# Usage: _handle_footer_toggle footer_draw_func_name expanded_state_var_name
+_handle_footer_toggle() {
+    local footer_draw_func="$1"
+    local -n is_expanded_ref="$2" # Nameref to the state variable
+
+    {
+        local old_footer_content; old_footer_content=$("$footer_draw_func")
+        local old_footer_lines; old_footer_lines=$(echo -e "$old_footer_content" | wc -l)
+
+        # Toggle the state
+        is_expanded_ref=$(( 1 - is_expanded_ref ))
+
+        # --- Perform the partial redraw without a full refresh ---
+        # The cursor is at the end of the list, before the divider. Move down into the footer area.
+        printf '\n'
+
+        # Clear the old footer area (the footer text + the final bottom divider).
+        clear_lines_down $(( old_footer_lines + 1 ))
+
+        # Now, print the new footer.
+        "$footer_draw_func"
+
+        # Move the cursor back to where the main loop expects it (end of list).
+        local new_footer_lines; new_footer_lines=$(echo -e "$("$footer_draw_func")" | wc -l) # The +1 is for the divider we removed
+        move_cursor_up $(( new_footer_lines + 1 ))
+    } >/dev/tty
+}
 #endregion User Input
 
 #region Error Handling & Traps
@@ -418,8 +488,14 @@ _list_view_example_header() {
 }
 
 _list_view_example_footer() {
-    printMsg " ${T_BOLD}Actions:${T_RESET}      ${C_L_GREEN}ENTER${T_RESET} to 'process' item"
-    printMsg " ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/j${T_RESET} Down | ${C_L_CYAN}↑/k${T_RESET} Up | ${C_L_YELLOW}Q/ESC${T_RESET} Back"
+    if [[ "${_LIST_VIEW_EXPANDED:-0}" -eq 1 ]]; then
+        printMsg " ${T_BOLD}Actions:${T_RESET}  ${C_L_GREEN}ENTER${T_RESET} to 'process' item | ${C_L_BLUE}(R)efresh${T_RESET} view  │ ${C_BLUE}? fewer options${T_RESET}"
+        printMsg " ${T_BOLD}Movement:${T_RESET} ${C_L_CYAN}↓/j${T_RESET} Down | ${C_L_CYAN}↑/k${T_RESET} Up                         │ ${C_L_YELLOW}Q/ESC${T_RESET} Back"
+        printMsg " ${T_BOLD}Extra:${T_RESET}    This is an extra line that appears when expanded."
+    else
+        printMsg " ${T_BOLD}Actions:${T_RESET}  ${C_L_GREEN}ENTER${T_RESET} to 'process' item | ${C_L_BLUE}(R)efresh${T_RESET} view  │ ${C_BLUE}? more options${T_RESET}"
+        printMsg " ${T_BOLD}Movement:${T_RESET} ${C_L_CYAN}↓/j${T_RESET} Down | ${C_L_CYAN}↑/k${T_RESET} Up                         │ ${C_L_YELLOW}Q/ESC${T_RESET} Back"
+    fi
 }
 
 _list_view_example_refresh() {
@@ -469,6 +545,15 @@ _list_view_example_key_handler() {
     out_result="noop"
 
     case "$key" in
+        '/'|'?')
+            # Delegate to the shared footer toggle handler.
+            _handle_footer_toggle "_list_view_example_footer" "_LIST_VIEW_EXPANDED"
+            out_result="partial_redraw"
+            ;;
+        'r'|'R')
+            show_timed_message "${T_INFO_ICON} Refreshing data..." 0.5
+            out_result="refresh"
+            ;;
         "$KEY_ENTER")
             if [[ -n "$selected_payload" ]]; then
                 clear_screen
@@ -486,6 +571,9 @@ _list_view_example_key_handler() {
 }
 
 run_list_view_example() {
+    # This variable will be visible to the footer and key handler functions.
+    local _LIST_VIEW_EXPANDED=0
+
     _interactive_list_view \
         "Interactive List View Example" \
         "_list_view_example_header" \
