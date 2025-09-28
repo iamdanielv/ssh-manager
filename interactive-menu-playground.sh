@@ -558,24 +558,25 @@ _list_view_example_key_handler() {
         'r'|'R')
             # Perform a partial refresh.
             {
+                # The cursor is at the end of the list, before the bottom divider.
+                local old_list_lines=$list_lines
                 local footer_content; footer_content=$(_list_view_example_footer)
                 local footer_line_count; footer_line_count=$(echo -e "$footer_content" | wc -l)
-                # The cursor is at the end of the list.
-                # 1. Clear the old footer.
+
                 _clear_list_view_footer "$footer_line_count"
-                # 2. Show a timed message in the cleared footer area.
                 show_timed_message "${T_INFO_ICON} Refreshing data..." 0.5
-                # 3. Move up to the start of the list and clear it.
-                move_cursor_up $(( list_lines + 1 )) # +1 to account for the newline in _clear_list_view_footer
-                clear_lines_down "$list_lines" # Clear the exact number of lines the old list occupied
-                # 4. Refresh the data and redraw the list and footer in place.
+
+                # Move up to the start of the list area and clear it downwards.
+                move_cursor_up $(( old_list_lines + 1 )) # +1 to account for the newline from _clear_list_view_footer
+                clear_lines_down "$old_list_lines"
+
+                # Refresh data and redraw the list and footer in the now-cleared space.
                 _refresh_data
                 _draw_list
                 printMsg "${C_GRAY}${DIV}${T_RESET}"
                 printMsg "$footer_content"
-                # 5. Reposition the cursor where the main loop expects it:
-                #    at the end of the list, before the bottom divider.
-                # The new footer has the same height as the old one in this case.
+
+                # Reposition the cursor where the main loop expects it.
                 move_cursor_up $(( footer_line_count + 1 ))
             } >/dev/tty
             out_result="partial_redraw" # Signal that we've handled the drawing.
