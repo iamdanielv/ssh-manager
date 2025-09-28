@@ -551,10 +551,11 @@ _list_view_example_key_handler() {
             out_result="partial_redraw"
             ;;
         'r'|'R')
-            # we are at the bottom of the list, go down one line
-            printMsg ""
-            clear_current_line
-            show_timed_message "${T_INFO_ICON} Refreshing data..." 1.5
+            # Perform a partial refresh to avoid full-screen flicker.
+            # The cursor is at the end of the list. Clear the footer area below it.
+            _clear_list_view_footer "_list_view_example_footer"
+            # Show a timed message in the now-cleared footer area.
+            show_timed_message "${T_INFO_ICON} Refreshing data..." 1
             out_result="refresh"
             ;;
         "$KEY_ENTER")
