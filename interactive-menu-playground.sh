@@ -500,34 +500,43 @@ _list_view_example_refresh() {
     out_menu_options=()
     out_data_payloads=()
 
-    # Static data for the example
+    # Source data for the example
     local -a names=(
         "alpha-service"
         "beta-database"
         "gamma-worker"
         "delta-proxy"
         "epsilon-long-name-service-that-will-most-definitely-need-truncation-to-fit"
-        "zeta-multiline-service"
+        "zeta-multiline-service-A"
+        "eta-multiline-service-B"
     )
     local -a statuses=(
         "${C_L_GREEN}Running${T_RESET}" "${C_L_GREEN}Running${T_RESET}" "${C_YELLOW}Degraded${T_RESET}" "${C_L_RED}Failed${T_RESET}"
-        "${C_L_GREEN}Running${T_RESET}" "${C_L_BLUE}Initializing${T_RESET}"
+        "${C_L_GREEN}Running${T_RESET}" "${C_L_BLUE}Initializing${T_RESET}" "${C_GRAY}Stopped${T_RESET}"
     )
 
-    for i in "${!names[@]}"; do
+    # On each refresh, show a random number of items (between 2 and the max)
+    # to demonstrate how the redraw handles lists of different heights.
+    local num_items=${#names[@]}
+    local num_to_show=$(( RANDOM % (num_items - 1) + 2 )) # Random number between 2 and num_items
+
+    # Get a shuffled list of indices to pick random items from the source arrays.
+    local -a shuffled_indices
+    mapfile -t shuffled_indices < <(shuf -i 0-$((num_items - 1)) -n "$num_to_show")
+
+    for i in "${shuffled_indices[@]}"; do
         local id="id-$(printf "%03d" $((i+1)))"
         local name="${names[i]}"
         local status="${statuses[i]}"
 
-        # The 'status' variable contains its own T_RESET, which will now be handled correctly by the new logic.
+        out_data_payloads+=("$id|$name|$status")
+
+        # Make some items multi-line for testing purposes
         if (( i == 2 )); then # Make the "Degraded" item multi-line for testing
-            out_data_payloads+=("$id|$name|$status")
             out_menu_options+=("ID: $id"$'\n'" Name: ${C_L_CYAN}${name}${T_RESET}"$'\n'" Status: ${status}")
-        elif (( i == 5 )); then # Make the "zeta" item multi-line with long lines
-            out_data_payloads+=("$id|$name|$status")
+        elif (( i == 6 )); then # Make an item multi-line with long lines
             out_menu_options+=("ID: $id - This is a very long first line that will need to be truncated for sure."$'\n'" Name: ${C_L_CYAN}${name}${T_RESET} - This is another very long line that will also be truncated."$'\n'" Status: ${status} - And a final long line for good measure to test truncation.")
         else
-            out_data_payloads+=("$id|$name|$status")
             out_menu_options+=("ID: $id | Name: ${C_L_CYAN}${name}${T_RESET} | Status: ${status}")
         fi
     done
