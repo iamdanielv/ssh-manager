@@ -185,35 +185,67 @@ interactive_menu() {
     fi
 
     _draw_menu_options() {
-        local output=""
+        local output=""; local total_width=70
         for i in "${!options[@]}"; do
-            local pointer=" "
-            if (( i == current_option )); then
-                pointer="${T_BOLD}${C_L_MAGENTA}❯${T_FG_RESET}  "
-                local selected_line="${options[i]}"
-                # Make sure that the line is padded or truncated 
-                # to max width 70 - 3 to account for the pointer
-                selected_line="$(_format_fixed_width_string "$selected_line" 67)"
+            local is_current=$(( i == current_option ))
+            local option_text="${options[i]}"
 
-                # Remove any existing reverse codes, then apply blue and reverse.
-                selected_line="${selected_line//${T_REVERSE}/}"
-                # any time we reset the FG color, we will replace with blue
-                selected_line="${selected_line//${T_FG_RESET}/${C_BLUE}}"
-                selected_line="${C_L_BLUE}${selected_line}${T_FG_RESET}"
-                # Apply reverse after every reset for full-line highlight
-                selected_line="${selected_line//${T_RESET}/${T_RESET}${T_REVERSE}}"
-                if [[ "$mode" == "multi" ]]; then pointer="${T_BOLD}${C_L_MAGENTA}❯${T_FG_RESET}_ "; if (( selected_options[i] == 1 )); then pointer="${T_BOLD}${C_L_MAGENTA}❯${C_GREEN}✓${T_FG_RESET} "; fi; fi
-                
-                output+="${pointer}${T_REVERSE}${selected_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
+            if [[ "$option_text" != *$'\n'* ]]; then
+                # --- Single-line item (no newlines) ---
+                local pointer=" "; local checkbox_text="  "
+                if [[ "$mode" == "multi" ]]; then checkbox_text="_ "; if (( selected_options[i] == 1 )); then checkbox_text="${T_BOLD}${C_GREEN}✓${T_FG_RESET} "; fi; fi
+
+                if (( is_current )); then
+                    pointer="${T_BOLD}${C_L_MAGENTA}❯${T_FG_RESET}"
+                    if [[ "$mode" == "multi" ]]; then checkbox_text="_ "; if (( selected_options[i] == 1 )); then checkbox_text="${C_GREEN}✓${T_FG_RESET} "; fi; fi
+                    local formatted_line; formatted_line=$(_format_fixed_width_string "$option_text" 67)
+                    formatted_line="${formatted_line//${T_REVERSE}/}"
+                    # any time we reset the FG color, we will replace with blue
+                    formatted_line="${formatted_line//${T_FG_RESET}/${C_BLUE}}"
+                    formatted_line="${C_L_BLUE}${formatted_line}${T_FG_RESET}"
+                    formatted_line="${formatted_line//${T_RESET}/${T_RESET}${T_REVERSE}}"
+                    output+="${pointer}${checkbox_text}${T_REVERSE}${formatted_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
+                else
+                    local formatted_line; formatted_line=$(_format_fixed_width_string "$option_text" 67)
+                    output+="${pointer}${checkbox_text}${formatted_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
+                fi
             else
-                local checkbox_text="   "
-                if [[ "$mode" == "multi" ]]; then checkbox_text=" _ "; if (( selected_options[i] == 1 )); then checkbox_text=" ${T_BOLD}${C_GREEN}✓${T_FG_RESET} "; fi; fi
-                local this_line="${options[i]}"
-                this_line="$(_format_fixed_width_string "$this_line" 67)"
-                output+="${checkbox_text}${this_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
+                # --- Multi-line item (contains newlines) ---
+                local -a lines; mapfile -t lines <<< "$option_text"
+                local num_lines=${#lines[@]}
+                local line_width=$(( total_width - 4 )) # Account for the box-drawing character and checkbox
+
+                for j in "${!lines[@]}"; do
+                    local line_prefix="│"; local pointer=" "; local checkbox_text="  "
+                    if (( j == 0 )); then line_prefix="┌"; fi
+                    if (( j == num_lines - 1 )); then line_prefix="└"; fi
+                    if (( num_lines == 1 )); then line_prefix=" "; fi # A single line with a trailing \n
+
+                    if [[ "$mode" == "multi" && j -eq 0 ]]; then
+                        checkbox_text="_ "; if (( selected_options[i] == 1 )); then checkbox_text="${T_BOLD}${C_GREEN}✓${T_FG_RESET} "; fi
+                    fi
+
+                    local formatted_line; formatted_line=$(_format_fixed_width_string "${lines[j]}" "$line_width")
+
+                    if (( is_current )); then
+                        if (( j == 0 )); then
+                            pointer="${T_BOLD}${C_L_MAGENTA}❯${T_RESET}"
+                            if [[ "$mode" == "multi" ]]; then if (( selected_options[i] == 1 )); then checkbox_text="${C_GREEN}✓${T_FG_RESET} "; else checkbox_text="_ "; fi; fi
+                        fi
+                        formatted_line="${formatted_line//${T_REVERSE}/}"
+                        # any time we reset the FG color, we will replace with blue
+                        formatted_line="${formatted_line//${T_FG_RESET}/${C_BLUE}}"
+                        formatted_line="${C_L_BLUE}${formatted_line}${T_FG_RESET}"
+                        formatted_line="${formatted_line//${T_RESET}/${T_RESET}${T_REVERSE}}"
+                        output+="${pointer}${checkbox_text}${T_REVERSE}${line_prefix}${formatted_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
+                    else
+                        output+=" ${checkbox_text}${line_prefix}${formatted_line}${T_CLEAR_LINE}${T_RESET}"$'\n'
+                    fi
+                done
             fi
         done
-        printf '%b' "$output"
+        # Use printf with %b to correctly interpret color codes
+        printf '%b' "${output}"
     }
 
     printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty; trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty' EXIT
@@ -344,7 +376,12 @@ _interactive_list_view() {
 run_single_select_example() {
     clear_screen
     printBanner "Single-Select Menu Example"
-    local -a options=("Option A" "Option B" "Option C (with a long description that might need wrapping or truncation)")
+    local -a options=(
+        "Option A"
+        "Option B"$'\n'"Something else goes here"
+        "Option C (with a long description that might need wrapping or truncation)"
+        "Option D"$'\n'"This is line 2"$'\n'"This is line 3"
+    )
     local selected_index
     selected_index=$(interactive_menu "single" "Choose one option:" "HEADER: Options" "${options[@]}")
 
@@ -359,7 +396,7 @@ run_single_select_example() {
 run_multi_select_example() {
     clear_screen
     printBanner "Multi-Select Menu Example"
-    local -a options=("All" "Apple" "Banana" "Cherry" "Date some ${C_RED}really long (with color!)${T_FG_RESET} text that should be ${C_YELLOW}truncated because${T_FG_RESET} it is super long")
+    local -a options=("All" "Apple" "Banana"$'\n'"A tasty yellow fruit" "Cherry" "Date some ${C_RED}really long (with color!)${T_FG_RESET} text that should be ${C_YELLOW}truncated because${T_FG_RESET} it is super long")
     local selected_indices_output
     selected_indices_output=$(interactive_multi_select_menu "Choose your favorite fruits:" "" "${options[@]}")
 
@@ -490,7 +527,15 @@ main() {
             1) run_multi_select_example ;;
             2) run_list_view_example ;;
             3) run_format_menu_lines_example ;;
-            4) break ;;
+            4)
+                local -a main_menu_options=(
+                    "Run ${C_RED}Single-Select${T_FG_RESET} Menu Example"
+                    "Run ${C_GREEN}Multi-Select${T_FG_RESET} Menu Example"
+                    "Run Interactive List View Example"
+                    "Run format_menu_lines Example"
+                    "Exit Playground"
+                )
+                break ;;
         esac
     done
 
