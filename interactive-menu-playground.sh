@@ -416,12 +416,12 @@ run_multi_select_example() {
 # --- List View Example ---
 
 _list_view_example_header() {
-    printMsg "  ${C_WHITE}%-15s %-20s %s${T_RESET}" "ID" "NAME" "STATUS"
+    printf "   ${C_WHITE}%-15s %-20s %s${T_RESET}\n" "ID" "NAME" "STATUS"
 }
 
 _list_view_example_footer() {
-    printMsg "  ${T_BOLD}Actions:${T_RESET}      ${C_L_GREEN}ENTER${T_RESET} to 'process' item"
-    printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/j${T_RESET} Down | ${C_L_CYAN}↑/k${T_RESET} Up | ${C_L_YELLOW}Q/ESC${T_RESET} Back"
+    printMsg " ${T_BOLD}Actions:${T_RESET}      ${C_L_GREEN}ENTER${T_RESET} to 'process' item"
+    printMsg " ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/j${T_RESET} Down | ${C_L_CYAN}↑/k${T_RESET} Up | ${C_L_YELLOW}Q/ESC${T_RESET} Back"
 }
 
 _list_view_example_refresh() {
