@@ -251,7 +251,9 @@ _inline_remove_ssh_key() {
     local footer_draw_func="$2"
 
     # Move cursor down past the list and its bottom divider.
-    _clear_list_view_footer "$footer_draw_func"
+    local footer_content; footer_content=$("$footer_draw_func"); local footer_lines; footer_lines=$(echo -e "$footer_content" | wc -l)
+    _clear_list_view_footer "$footer_lines"
+
     # Build the multi-line question for the prompt.
     local pub_key_path="${key_base_path}.pub"
     printBanner "${C_RED}Delete Key${T_RESET}"
@@ -993,7 +995,9 @@ _inline_remove_ssh_host() {
     local footer_draw_func="$2"
 
     # Move cursor down past the list and its top divider.
-    _clear_list_view_footer "$footer_draw_func"
+    local footer_content; footer_content=$("$footer_draw_func"); local footer_lines; footer_lines=$(echo -e "$footer_content" | wc -l)
+    _clear_list_view_footer "$footer_lines"
+
     # Show the prompt in the cleared footer area.
     printBanner "${C_RED}Delete / Remove Host${T_RESET}"
     prompt_yes_no "Are you sure you want to ${C_RED}remove${T_RESET} '${host_to_remove}'?\n    This will permanently delete the host from your config." "n"
@@ -1351,7 +1355,9 @@ _inline_remove_port_forward() {
     IFS='|' read -r idx type spec host desc pid <<< "$payload"
 
     # Move cursor down past the list and its top divider.
-    _clear_list_view_footer "$footer_draw_func"
+    local footer_content; footer_content=$("$footer_draw_func"); local footer_lines; footer_lines=$(echo -e "$footer_content" | wc -l)
+    _clear_list_view_footer "$footer_lines"
+
     # Show the prompt in the cleared footer area.
     printBanner "${C_RED}Delete / Remove Port Forward${T_RESET}"
     prompt_yes_no "Permanently ${C_RED}delete${T_RESET} saved forward\n     '${spec}' on '${host}'?" "n"
@@ -1376,7 +1382,8 @@ _inline_toggle_port_forward() {
     IFS='|' read -r idx type spec host desc pid <<< "$payload"
 
     # Move cursor down past the list and its top divider.
-    _clear_list_view_footer "$footer_draw_func"
+    local footer_content; footer_content=$("$footer_draw_func"); local footer_lines; footer_lines=$(echo -e "$footer_content" | wc -l)
+    _clear_list_view_footer "$footer_lines"
 
     if [[ -n "$pid" ]]; then
         # Action: Deactivate
@@ -1843,7 +1850,8 @@ _key_view_key_handler() {
     case "$key" in
         'a'|'A')
             # Move cursor down past the list and its bottom divider.
-            _clear_list_view_footer "_key_view_draw_footer"
+            local footer_content; footer_content=$(_key_view_draw_footer); local footer_lines; footer_lines=$(echo -e "$footer_content" | wc -l)
+            _clear_list_view_footer "$footer_lines"
             # Show the prompt in the cleared footer area.
             printBanner "${C_GREEN}Add New SSH Key${T_RESET}"
             local -a key_types=("ed25519 (recommended)" "rsa (legacy, 4096 bits)")

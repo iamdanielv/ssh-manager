@@ -112,7 +112,7 @@ _inline_backup_ssh_config() {
     local footer_draw_func="$1"
     {   
         local footer_content; footer_content=$("$footer_draw_func"); local footer_lines; footer_lines=$(echo -e "$footer_content" | wc -l)
-        _clear_list_view_footer "$footer_draw_func"
+        _clear_list_view_footer "$footer_lines"
         printMsgNoNewline "${T_CURSOR_SHOW}"
         printBanner "Backup SSH Config"
 
