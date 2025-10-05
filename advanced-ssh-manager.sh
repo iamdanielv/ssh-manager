@@ -1,11 +1,14 @@
 #!/bin/bash
 # Advanced tools for managing SSH configuration.
 
-
-# Source the main script to inherit all shared utility functions.
-# This makes this script dependent on `ssh-manager.sh` being in the same directory.
-if ! source "$(dirname "${BASH_SOURCE[0]}")/ssh-manager.sh"; then
-    echo "Error: Could not source ssh-manager.sh. Make sure it is in the same directory." >&2
+# Source the TUI and SSH utility libraries.
+# The script will fail if they are not in the lib/ directory.
+if ! source "$(dirname "${BASH_SOURCE[0]}")/lib/tui.lib.sh"; then
+    echo "Error: Could not source lib/tui.lib.sh. Make sure it is in the lib/ directory." >&2
+    exit 1
+fi
+if ! source "$(dirname "${BASH_SOURCE[0]}")/lib/ssh.lib.sh"; then
+    echo "Error: Could not source lib/ssh.lib.sh. Make sure it is in the lib/ directory." >&2
     exit 1
 fi
 
@@ -16,7 +19,7 @@ print_usage() {
     printMsg "A collection of advanced tools for managing your SSH configuration."
     printMsg "\n${T_ULINE}Usage:${T_RESET}"
     printMsg "  $(basename "$0") [option]"
-    printMsg "\nThis script is fully interactive."
+    printMsg "\nThis script is fully interactive. Run without arguments to launch the main menu."
     printMsg "\n${T_ULINE}Options:${T_RESET}"
     printMsg "  ${C_L_BLUE}-h, --help${T_RESET}     Show this help message"
 }
@@ -107,7 +110,8 @@ backup_ssh_config() {
 # Usage: _inline_backup_ssh_config <footer_draw_func>
 _inline_backup_ssh_config() {
     local footer_draw_func="$1"
-    {
+    {   
+        local footer_content; footer_content=$("$footer_draw_func"); local footer_lines; footer_lines=$(echo -e "$footer_content" | wc -l)
         _clear_list_view_footer "$footer_draw_func"
         printMsgNoNewline "${T_CURSOR_SHOW}"
         printBanner "Backup SSH Config"
@@ -187,20 +191,6 @@ edit_ssh_host_in_editor() {
     printOkMsg "Host '${host_to_edit}' has been updated from editor."
 }
 
-# --- Main Menu View Helpers ---
-
-_advanced_host_view_draw_footer() {
-    if [[ "${_ADVANCED_VIEW_FOOTER_EXPANDED:-0}" -eq 1 ]]; then
-        printMsg "  ${T_BOLD}Host Edit:${T_RESET}    ${C_L_CYAN}ENTER/E (E)dit${T_RESET} Selected              │ ${C_BLUE}? fewer options${T_RESET}"
-        printMsg "  ${T_BOLD}Management:${T_RESET}   ${C_L_BLUE}(O)pen${T_RESET} ssh config in editor          │ ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET}"
-        printMsg "                ${C_L_GREEN}(B)ackup${T_RESET} | ${C_L_YELLOW}E(x)port${T_RESET} | ${C_L_YELLOW}(I)mport${T_RESET}"
-        printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/j${T_RESET} Move Down | ${C_L_CYAN}↑/k${T_RESET} Move up${T_RESET}"
-    else
-        printMsg "  ${T_BOLD}Host Edit:${T_RESET}    ${C_L_CYAN}ENTER/E (E)dit${T_RESET} Selected              │ ${C_BLUE}? more options${T_RESET}"
-        printMsg "  ${T_BOLD}Management:${T_RESET}   ${C_L_BLUE}(O)pen${T_RESET} ssh config in editor          │ ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET}"
-    fi
-}
-
 _advanced_host_view_key_handler() {
     local key="$1"
     local selected_host="$2"
@@ -224,7 +214,12 @@ _advanced_host_view_key_handler() {
             fi
             ;;
         'o'|'O')
-            _launch_editor_for_config
+            {
+                clear_screen
+                printMsgNoNewline "${T_CURSOR_SHOW}"
+                _launch_editor_for_config
+                printMsgNoNewline "${T_CURSOR_HIDE}"
+            } >/dev/tty
             out_result="refresh"
             ;;
         'b'|'B')
@@ -243,6 +238,20 @@ _advanced_host_view_key_handler() {
             out_result="exit"
             ;;
     esac
+}
+
+# --- Main Menu View Helpers ---
+
+_advanced_host_view_draw_footer() {
+    if [[ "${_ADVANCED_VIEW_FOOTER_EXPANDED:-0}" -eq 1 ]]; then
+        printMsg "  ${T_BOLD}Host Edit:${T_RESET}    ${C_L_CYAN}ENTER/E (E)dit${T_RESET} Selected              │ ${C_BLUE}? fewer options${T_RESET}"
+        printMsg "  ${T_BOLD}Management:${T_RESET}   ${C_L_BLUE}(O)pen${T_RESET} ssh config in editor          │ ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET}"
+        printMsg "                ${C_L_GREEN}(B)ackup${T_RESET} | ${C_L_YELLOW}E(x)port${T_RESET} | ${C_L_YELLOW}(I)mport${T_RESET}"
+        printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/j${T_RESET} Move Down | ${C_L_CYAN}↑/k${T_RESET} Move up${T_RESET}"
+    else
+        printMsg "  ${T_BOLD}Host Edit:${T_RESET}    ${C_L_CYAN}ENTER/E (E)dit${T_RESET} Selected              │ ${C_BLUE}? more options${T_RESET}"
+        printMsg "  ${T_BOLD}Management:${T_RESET}   ${C_L_BLUE}(O)pen${T_RESET} ssh config in editor          │ ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET}"
+    fi
 }
 
 interactive_advanced_host_view() {
@@ -270,7 +279,8 @@ main() {
             *) print_usage; echo; printErrMsg "Unknown option: $1"; exit 1 ;;
         esac
     fi
-    _setup_core_environment "ssh" "awk" "cat" "grep" "rm" "mktemp" "cp" "date"
+
+    _ensure_ssh_dir_and_config
     main_loop
 }
 

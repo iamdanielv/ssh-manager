@@ -8,3 +8,7 @@ Thumbs.db
 
 # Test artifacts
 /test/mock_*
+
+# Build artificats
+/dist/*
+

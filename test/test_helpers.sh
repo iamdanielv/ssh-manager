@@ -87,10 +87,19 @@ initialize_test_environment() {
     export SSH_DIR="${TEST_DIR}/.ssh"
     export SSH_CONFIG_PATH="${SSH_DIR}/config"
 
-    # Source the script we are testing. This must be done AFTER setting the
-    # environment variables.
-    # shellcheck source=../ssh-manager.sh
-    if ! source "$(dirname "${BASH_SOURCE[0]}")/../${script_to_source}"; then
+    # Source the libraries first, as the main scripts depend on them.
+    local script_dir; script_dir=$(dirname "${BASH_SOURCE[0]}")
+    if ! source "${script_dir}/../lib/tui.lib.sh"; then
+        echo "Error: Could not source lib/tui.lib.sh." >&2
+        exit 1
+    fi
+    if ! source "${script_dir}/../lib/ssh.lib.sh"; then
+        echo "Error: Could not source lib/ssh.lib.sh." >&2
+        exit 1
+    fi
+
+    # Source the script we are testing. This must be done AFTER setting the env vars and sourcing libs.
+    if ! source "${script_dir}/../${script_to_source}"; then
         echo "Error: Could not source ${script_to_source}." >&2
         exit 1
     fi
@@ -140,10 +149,17 @@ _define_mocks() {
 
     # Mock for `prompt_for_input`.
     prompt_for_input() {
+        # The mock doesn't need all the arguments, but it's good practice
+        # to declare them to match the real function's signature.
+        local prompt_text="$1" # Unused in mock
         local var_name="$2"
+        local default_val="${3:-}"
+        local allow_empty="${4:-false}"
+
         local -n var_ref="$2"
         if [[ -n "$MOCK_PROMPT_CANCEL_ON_VAR" && "$var_name" == "$MOCK_PROMPT_CANCEL_ON_VAR" ]]; then return 1; fi
-        var_ref="${MOCK_PROMPT_INPUTS[$var_name]:-${3:-}}"; return 0
+        # Use the provided mock value, or the default value if no mock is set.
+        var_ref="${MOCK_PROMPT_INPUTS[$var_name]:-$default_val}"; return 0
     }
 
     # Mock for `select_ssh_host`
