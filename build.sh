@@ -48,10 +48,10 @@ while IFS= read -r line; do
 
         # Write the start marker, the file content, and the end marker
         echo "$START_MARKER" >> "$OUTPUT_SCRIPT"
-        # Append the content of the included file
-        # Using printf ensures that we handle files with or without a trailing newline correctly.
-        # It prints the file content, then adds exactly one newline.
-        printf '%s\n' "$(cat "$INCLUDE_FILE_ABS_PATH")" >> "$OUTPUT_SCRIPT"
+        # Directly append the content of the included file. This is more robust
+        # than using command substitution which can strip trailing newlines.
+        cat "$INCLUDE_FILE_ABS_PATH" >> "$OUTPUT_SCRIPT"
+        echo "" >> "$OUTPUT_SCRIPT" # Ensure there's a newline after the include
         echo "$END_MARKER" >> "$OUTPUT_SCRIPT"
 
         # Skip lines until the END marker
