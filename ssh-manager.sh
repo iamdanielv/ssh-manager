@@ -503,6 +503,11 @@ _editor_format_line() {
         display_val="${C_L_CYAN}${display_val}${T_RESET}"
     fi
 
+    # Truncate the display value if it's too long to prevent UI overflow.
+    # The total width is ~70, label is 15, prefix is ~8. Leaves ~47 for the value.
+    local max_val_width=45
+    display_val=$(_format_fixed_width_string "$display_val" "$max_val_width")
+
     local change_indicator=" "
     # In 'add' mode, there are no "changes" from an original, so no indicator.
     if [[ "$mode" != "add" ]]; then
@@ -522,7 +527,7 @@ _editor_format_line() {
         change_indicator="${C_L_YELLOW}*${T_RESET}"
     fi
 
-    printf "  ${C_L_WHITE}%s)${T_RESET} %b %-15s: %b\n" "$key" "$change_indicator" "$label" "$display_val"
+    printf "  ${C_L_WHITE}%s)${T_RESET} %b %-15s: %s\n" "$key" "$change_indicator" "$label" "$display_val"
 }
 
 # (Private) A generic UI drawing function for editors.
@@ -567,7 +572,7 @@ _port_forward_editor_draw_fields() {
     _editor_format_line "3" "${p1_label}" "$new_p1" "$original_p1"
     _editor_format_line "4" "${h_label}" "$new_h" "$original_h"
     _editor_format_line "5" "${p2_label}" "$new_p2" "$original_p2"
-    _editor_format_line "6" "Description" "$new_desc" "$original_desc"
+    _editor_format_line "6" "Description" "$new_desc" "$original_desc" "false" "false"
 }
 
 # (Private) Draws the UI for the interactive host editor.

@@ -315,16 +315,27 @@ prompt_for_input() {
         if (( cursor_pos < view_start )); then view_start=$cursor_pos; fi
         if (( cursor_pos >= view_start + available_width )); then view_start=$(( cursor_pos - available_width + 1 )); fi
  
-        local display_str="${input_str:$view_start:$available_width}"
+        local display_str="${input_str:$view_start:$available_width}" local total_len=${#input_str}
+ 
+        # --- Ellipsis logic for overflow ---
+        local ellipsis="…"
+        if (( total_len > available_width )); then
+            if (( view_start > 0 )); then
+                # We've scrolled right, show ellipsis on the left.
+                display_str="${ellipsis}${display_str:1}"
+            fi
+            if (( view_start + available_width < total_len )); then
+                # There's more text to the right, show ellipsis on the right.
+                display_str="${display_str:0:${#display_str}-1}${ellipsis}"
+            fi
+        fi
  
         # Print the dynamic part: colored input, reset color, and clear rest of line.
         # This overwrites the previous input and clears any leftover characters.
         printMsgNoNewline "${C_L_CYAN}${display_str}${T_RESET}${T_CLEAR_LINE}" >/dev/tty
  
         # --- Cursor positioning ---
-        # The cursor is now at the end of the displayed string. We move it left
-        # by the number of characters that are *after* the logical cursor position.
-        local display_cursor_pos=$(( cursor_pos - view_start ))
+        local display_cursor_pos=$(( cursor_pos - view_start )); if (( view_start > 0 )); then ((display_cursor_pos++)); fi
         local chars_after_cursor=$(( ${#display_str} - display_cursor_pos ))
         if (( chars_after_cursor > 0 )); then
             printf '\033[%sD' "$chars_after_cursor" >/dev/tty
