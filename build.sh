@@ -14,43 +14,47 @@
 
 set -euo pipefail
 
-# Check for correct number of arguments
 if [ "$#" -ne 1 ]; then
     echo "Usage: $0 <source_script>"
     exit 1
 fi
 
 SOURCE_SCRIPT=$1
-SOURCE_DIR="src"
+if [ ! -f "$SOURCE_SCRIPT" ]; then
+    echo "Error: Source script not found: $SOURCE_SCRIPT" >&2
+    exit 1
+fi
+
+# Determine directories relative to the source script's location
+SOURCE_DIR=$(dirname "$SOURCE_SCRIPT")
 
 # Ensure the output directory exists
 DIST_DIR="dist"
 mkdir -p "$DIST_DIR"
-OUTPUT_SCRIPT="$DIST_DIR/$(basename "${SOURCE_SCRIPT%.sh}").sh"
+OUTPUT_SCRIPT="$DIST_DIR/$(basename "$SOURCE_SCRIPT")"
 
 # Clear the output file before writing
 > "$OUTPUT_SCRIPT"
 
 # Process the source script
 while IFS= read -r line; do
-    if [[ "$line" =~ ^[[:space:]]*#\ BUILD_INCLUDE_START:\ (lib/.*) ]]; then
+    # Match the include directive. The path is captured in the first group.
+    if [[ "$line" =~ ^[[:space:]]*#\ BUILD_INCLUDE_START:\ (.*) ]]; then
         # Extract the file path to include
         INCLUDE_FILE_REL_PATH="${BASH_REMATCH[1]}"
-        INCLUDE_FILE_ABS_PATH="${SOURCE_DIR}/${INCLUDE_FILE_REL_PATH}"
-        START_MARKER="$line"
+        INCLUDE_FILE_FULL_PATH="${SOURCE_DIR}/${INCLUDE_FILE_REL_PATH}"
         END_MARKER="# BUILD_INCLUDE_END: ${INCLUDE_FILE_REL_PATH}"
 
-        # Check if the file exists
-        if [ ! -f "$INCLUDE_FILE_ABS_PATH" ]; then
-            echo "Error: Included file not found: $INCLUDE_FILE_ABS_PATH" >&2
+        if [ ! -f "$INCLUDE_FILE_FULL_PATH" ]; then
+            echo "Error: Included file not found: $INCLUDE_FILE_FULL_PATH" >&2
             exit 1
         fi
 
         # Write the start marker, the file content, and the end marker
-        echo "$START_MARKER" >> "$OUTPUT_SCRIPT"
+        echo "$line" >> "$OUTPUT_SCRIPT"
         # Directly append the content of the included file. This is more robust
         # than using command substitution which can strip trailing newlines.
-        cat "$INCLUDE_FILE_ABS_PATH" >> "$OUTPUT_SCRIPT"
+        cat "$INCLUDE_FILE_FULL_PATH" >> "$OUTPUT_SCRIPT"
         echo "" >> "$OUTPUT_SCRIPT" # Ensure there's a newline after the include
         echo "$END_MARKER" >> "$OUTPUT_SCRIPT"
 
