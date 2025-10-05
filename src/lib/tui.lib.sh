@@ -687,3 +687,57 @@ run_menu_action() {
     # "cancellation" feedback and we should skip the prompt.
     if [[ $exit_code -ne 2 ]]; then prompt_to_continue; fi
 }
+
+#region Spinners
+SPINNER_OUTPUT=""
+_run_with_spinner_non_interactive() {
+    local desc="$1"; shift; local cmd=("$@"); printMsgNoNewline "${desc} " >&2
+    if SPINNER_OUTPUT=$("${cmd[@]}" 2>&1); then printf '%s\n' "${C_L_GREEN}Done.${T_RESET}" >&2; return 0
+    else local exit_code=$?; printf '%s\n' "${C_RED}Failed.${T_RESET}" >&2
+        while IFS= read -r line; do printf '    %s\n' "$line"; done <<< "$SPINNER_OUTPUT" >&2; return $exit_code; fi
+}
+
+_run_with_spinner_interactive() {
+    local desc="$1"; shift; local cmd=("$@"); local temp_output_file; temp_output_file=$(mktemp)
+    if [[ ! -f "$temp_output_file" ]]; then printErrMsg "Failed to create temp file."; return 1; fi
+    local spinner_chars="⣾⣷⣯⣟⡿⢿⣻⣽"; local i=0; "${cmd[@]}" &> "$temp_output_file" &
+    local pid=$!; printMsgNoNewline "${T_CURSOR_HIDE}" >&2; trap 'printMsgNoNewline "${T_CURSOR_SHOW}" >&2; rm -f "$temp_output_file"; exit 130' INT TERM
+    while ps -p $pid > /dev/null; do
+        printf '\r\033[2K' >&2; local line; line=$(tail -n 1 "$temp_output_file" 2>/dev/null | tr -d '\r' || true)
+        printf ' %s%s%s  %s' "${C_L_BLUE}" "${spinner_chars:$i:1}" "${T_RESET}" "${desc}" >&2
+        if [[ -n "$line" ]]; then printf ' %s[%s]%s' "${C_GRAY}" "${line:0:70}" "${T_RESET}" >&2; fi
+        i=$(((i + 1) % ${#spinner_chars})); sleep 0.1; done
+    wait $pid; local exit_code=$?; SPINNER_OUTPUT=$(<"$temp_output_file"); rm "$temp_output_file";
+    printMsgNoNewline "${T_CURSOR_SHOW}" >&2; trap - INT TERM; clear_current_line >&2
+    if [[ $exit_code -eq 0 ]]; then printOkMsg "${desc}" >&2
+    else printErrMsg "Task failed: ${desc}" >&2
+        while IFS= read -r line; do printf '    %s\n' "$line"; done <<< "$SPINNER_OUTPUT" >&2; fi
+    return $exit_code
+}
+
+run_with_spinner() {
+    if [[ ! -t 1 ]]; then _run_with_spinner_non_interactive "$@"; else _run_with_spinner_interactive "$@"; fi
+}
+
+wait_for_pids_with_spinner() {
+    local desc="$1"; shift; local pids_to_wait_for=("$@")
+    if [[ ! -t 1 ]]; then
+        printMsgNoNewline "    ${T_INFO_ICON} ${desc}... " >&2;
+        if wait "${pids_to_wait_for[@]}"; then printf '%s\n' "${C_L_GREEN}Done.${T_RESET}" >&2; return 0
+        else local exit_code=$?; printf '%s\n' "${C_RED}Failed (wait command exit code: $exit_code).${T_RESET}" >&2; return $exit_code; fi
+    fi
+    _spinner() {
+        local spinner_chars="⣾⣷⣯⣟⡿⢿⣻⣽"; local i=0;
+        while true; do printf '\r\033[2K' >&2; printf '    %s%s%s %s' "${C_L_BLUE}" "${spinner_chars:$i:1}" "${T_RESET}" "${desc}" >&2; i=$(((i + 1) % ${#spinner_chars})); sleep 0.1; done;
+    }
+    printMsgNoNewline "${T_CURSOR_HIDE}" >&2
+    _spinner &
+    local spinner_pid=$!
+    trap 'kill "$spinner_pid" &>/dev/null; printMsgNoNewline "${T_CURSOR_SHOW}" >&2; exit 130' INT TERM
+    wait "${pids_to_wait_for[@]}"; local exit_code=$?
+    kill "$spinner_pid" &>/dev/null; printMsgNoNewline "${T_CURSOR_SHOW}" >&2; trap - INT TERM; clear_current_line >&2
+    if [[ $exit_code -eq 0 ]]; then printOkMsg "${desc}" >&2
+    else printErrMsg "Wait command failed with exit code ${exit_code} for task: ${desc}" >&2; fi
+    return $exit_code
+}
+#endregion Spinners

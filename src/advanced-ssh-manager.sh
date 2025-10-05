@@ -1,18 +1,36 @@
 #!/bin/bash
 # Advanced tools for managing SSH configuration.
 
-# Source the TUI and SSH utility libraries.
-# The script will fail if they are not in the src/lib/ directory.
-if ! source "$(dirname "${BASH_SOURCE[0]}")/lib/tui.lib.sh"; then
-    echo "Error: Could not source src/lib/tui.lib.sh." >&2
-    exit 1
-fi
-if ! source "$(dirname "${BASH_SOURCE[0]}")/lib/ssh.lib.sh"; then
-    echo "Error: Could not source src/lib/ssh.lib.sh." >&2
-    exit 1
-fi
+# BUILD_INCLUDE_START: lib/tui.lib.sh
+# This block is replaced by the build script.
+# For development, it sources the library file.
+if ! source "$(dirname "${BASH_SOURCE[0]}")/lib/tui.lib.sh"; then echo "Error: Could not source src/lib/tui.lib.sh." >&2; exit 1; fi
+# BUILD_INCLUDE_END: lib/tui.lib.sh
+
+# BUILD_INCLUDE_START: lib/ssh.lib.sh
+# This block is replaced by the build script.
+# For development, it sources the library file.
+if ! source "$(dirname "${BASH_SOURCE[0]}")/lib/ssh.lib.sh"; then echo "Error: Could not source src/lib/ssh.lib.sh." >&2; exit 1; fi
+# BUILD_INCLUDE_END: lib/ssh.lib.sh
+
+# --- Constants ---
+SSH_DIR="${SSH_DIR:-${HOME}/.ssh}"
+SSH_CONFIG_PATH="${SSH_CONFIG_PATH:-${SSH_DIR}/config}"
 
 # --- Script Functions ---
+
+#region Prerequisite & Sanity Checks
+_check_command_exists() { command -v "$1" &>/dev/null; }
+prereq_checks() {
+    local missing_commands=(); printf '%s Running prereq checks' "${T_INFO_ICON}"
+    for cmd in "$@"; do printf '%b.%b' "${C_L_BLUE}" "${T_RESET}"; if ! _check_command_exists "$cmd"; then missing_commands+=("$cmd"); fi; done; echo
+    if [[ ${#missing_commands[@]} -gt 0 ]]; then
+        clear_lines_up 1; printErrMsg "Prerequisite checks failed. Missing commands:"
+        for cmd in "${missing_commands[@]}"; do printMsg "    - ${C_L_YELLOW}${cmd}${T_RESET}"; done
+        printMsg "${T_INFO_ICON} Please install the missing commands and try again."; exit 1
+    fi; clear_lines_up 1
+}
+#endregion Prerequisite & Sanity Checks
 
 print_usage() {
     printBanner "Advanced SSH Manager Tools"
@@ -213,13 +231,28 @@ _advanced_host_view_key_handler() {
                 out_result="refresh"
             fi
             ;;
+        'f'|'F')
+            # Move cursor down past the list and its bottom divider.
+            local footer_content; footer_content=$(_advanced_host_view_draw_footer); local footer_lines; footer_lines=$(echo -e "$footer_content" | wc -l)
+            _clear_list_view_footer "$footer_lines"
+            # Show cursor for input
+            printMsgNoNewline "${T_CURSOR_SHOW}" >/dev/tty
+            printBanner "Filter by Tag or Alias"
+            prompt_for_input "Enter text to filter by (leave empty to clear)" "_HOST_VIEW_CURRENT_FILTER" "${_HOST_VIEW_CURRENT_FILTER:-}" "true"
+            # Hide cursor again before redrawing the list view
+            printMsgNoNewline "${T_CURSOR_HIDE}" >/dev/tty
+            out_result="refresh"
+            ;;
+        'l'|'L')
+            # Clear filter
+            if [[ -n "${_HOST_VIEW_CURRENT_FILTER:-}" ]]; then
+                _HOST_VIEW_CURRENT_FILTER=""
+                out_result="refresh"
+            fi
+            ;;
         'o'|'O')
-            {
-                clear_screen
-                printMsgNoNewline "${T_CURSOR_SHOW}"
-                _launch_editor_for_config
-                printMsgNoNewline "${T_CURSOR_HIDE}"
-            } >/dev/tty
+            # This function is defined in lib/ssh.lib.sh and handles its own UI.
+            _launch_editor_for_config
             out_result="refresh"
             ;;
         'b'|'B')
@@ -243,20 +276,32 @@ _advanced_host_view_key_handler() {
 # --- Main Menu View Helpers ---
 
 _advanced_host_view_draw_footer() {
+    local filter_text=""
+    if [[ -n "${_HOST_VIEW_CURRENT_FILTER:-}" ]]; then
+        filter_text="${C_L_YELLOW}(F)ilter: ${_HOST_VIEW_CURRENT_FILTER}${T_RESET} | C(l)ear"
+    else
+        filter_text="${C_L_YELLOW}(F)ilter${T_RESET} by tag or alias"
+    fi
+
     if [[ "${_ADVANCED_VIEW_FOOTER_EXPANDED:-0}" -eq 1 ]]; then
         printMsg "  ${T_BOLD}Host Edit:${T_RESET}    ${C_L_CYAN}ENTER/E (E)dit${T_RESET} Selected              │ ${C_BLUE}? fewer options${T_RESET}"
         printMsg "  ${T_BOLD}Management:${T_RESET}   ${C_L_BLUE}(O)pen${T_RESET} ssh config in editor          │ ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET}"
         printMsg "                ${C_L_GREEN}(B)ackup${T_RESET} | ${C_L_YELLOW}E(x)port${T_RESET} | ${C_L_YELLOW}(I)mport${T_RESET}"
+        printMsg "  ${T_BOLD}Filter:${T_RESET}       ${filter_text}"
         printMsg "  ${T_BOLD}Navigation:${T_RESET}   ${C_L_CYAN}↓/j${T_RESET} Move Down | ${C_L_CYAN}↑/k${T_RESET} Move up${T_RESET}"
     else
         printMsg "  ${T_BOLD}Host Edit:${T_RESET}    ${C_L_CYAN}ENTER/E (E)dit${T_RESET} Selected              │ ${C_BLUE}? more options${T_RESET}"
         printMsg "  ${T_BOLD}Management:${T_RESET}   ${C_L_BLUE}(O)pen${T_RESET} ssh config in editor          │ ${C_L_YELLOW}Q/ESC (Q)uit${T_RESET}"
+        printMsg "  ${T_BOLD}Filter:${T_RESET}       ${filter_text}"
     fi
 }
 
 interactive_advanced_host_view() {
     # This variable is visible to the key handler and footer functions called by _interactive_list_view.
     local _ADVANCED_VIEW_FOOTER_EXPANDED=0
+    # This variable is used by the common refresh function and key handler to filter hosts.
+    # It must be defined in this scope to be visible to both. It should be empty by default.
+    local _HOST_VIEW_CURRENT_FILTER=""
 
     _interactive_list_view \
         "Advanced SSH Manager" \
@@ -281,6 +326,7 @@ main() {
     fi
 
     _ensure_ssh_dir_and_config
+    prereq_checks "ssh" "awk" "grep" "tput" "date" "cp" "cat" "mktemp"
     main_loop
 }
 
