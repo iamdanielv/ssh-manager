@@ -352,10 +352,19 @@ prompt_for_input() {
                 if [[ -n "$input_str" || "$allow_empty" == "true" ]]; then
                     var_ref="$input_str"
                     # On success, clear the input line and the prompt text above it.
-                    clear_current_line >/dev/tty; clear_lines_up "$prompt_lines"
-                    # Print the final collapsed prompt and value.
-                    local final_prompt_text; final_prompt_text=$(echo -e "$prompt_text" | tr '\n' ' ')
-                    printMsg "${T_QST_ICON} ${final_prompt_text}: ${C_L_GREEN}${var_ref}${T_RESET}" >/dev/tty
+                    clear_current_line >/dev/tty; clear_lines_up "$prompt_lines" >/dev/tty
+
+                    # --- Print a clean, single-line, truncated summary ---
+                    local total_width=70
+                    local icon_len; icon_len=$(strip_ansi_codes "${T_QST_ICON} " | wc -c)
+                    local separator_len=2 # for ": "
+                    local available_width=$(( total_width - icon_len - separator_len ))
+                    local prompt_width=$(( available_width / 2 )); local value_width=$(( available_width - prompt_width ))
+                    local single_line_prompt; single_line_prompt=$(echo -e "$prompt_text" | tr '\n' ' ')
+                    local truncated_prompt; truncated_prompt=$(_truncate_string "$single_line_prompt" "$prompt_width")
+                    local truncated_value; truncated_value=$(_truncate_string "${C_L_GREEN}${var_ref}${T_RESET}" "$value_width")
+                    printMsg "${T_QST_ICON} ${truncated_prompt}: ${truncated_value}" >/dev/tty
+
                     return 0
                 fi
                 ;;
