@@ -4,13 +4,13 @@
 # BUILD_INCLUDE_START: lib/tui.lib.sh
 # This block is replaced by the build script.
 # For development, it sources the library file.
-if ! source "$(dirname "${BASH_SOURCE[0]}")/lib/tui.lib.sh"; then echo "Error: Could not source lib/tui.lib.sh." >&2; exit 1; fi
+if ! source "$(dirname "${BASH_SOURCE[0]}")/lib/tui.lib.sh"; then echo "Error: Could not source src/lib/tui.lib.sh." >&2; exit 1; fi
 # BUILD_INCLUDE_END: lib/tui.lib.sh
 
 # BUILD_INCLUDE_START: lib/ssh.lib.sh
 # This block is replaced by the build script.
 # For development, it sources the library file.
-if ! source "$(dirname "${BASH_SOURCE[0]}")/lib/ssh.lib.sh"; then echo "Error: Could not source lib/ssh.lib.sh." >&2; exit 1; fi
+if ! source "$(dirname "${BASH_SOURCE[0]}")/lib/ssh.lib.sh"; then echo "Error: Could not source src/lib/ssh.lib.sh." >&2; exit 1; fi
 # BUILD_INCLUDE_END: lib/ssh.lib.sh
 
 #region Prerequisite & Sanity Checks

@@ -2,13 +2,13 @@
 # Advanced tools for managing SSH configuration.
 
 # Source the TUI and SSH utility libraries.
-# The script will fail if they are not in the lib/ directory.
+# The script will fail if they are not in the src/lib/ directory.
 if ! source "$(dirname "${BASH_SOURCE[0]}")/lib/tui.lib.sh"; then
-    echo "Error: Could not source lib/tui.lib.sh. Make sure it is in the lib/ directory." >&2
+    echo "Error: Could not source src/lib/tui.lib.sh." >&2
     exit 1
 fi
 if ! source "$(dirname "${BASH_SOURCE[0]}")/lib/ssh.lib.sh"; then
-    echo "Error: Could not source lib/ssh.lib.sh. Make sure it is in the lib/ directory." >&2
+    echo "Error: Could not source src/lib/ssh.lib.sh." >&2
     exit 1
 fi
 

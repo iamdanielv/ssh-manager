@@ -163,17 +163,17 @@ Bypass the interactive menus for quick, direct actions.
 
 ### `ssh-manager.sh`
 
--   `-c, --connect`: Go directly to host selection for connecting.
--   `-a, --add`: Go directly to the 'Add a new server' menu.
--   `-p, --port-forward`: Go directly to the 'Port Forwarding' menu.
--   `-l, --list-hosts`: List all configured hosts and exit.
--   `-f, --list-forwards`: List active port forwards and exit.
--   `-t, --test [host|all]`: Test connection to a specific host, all hosts, or show the selection menu.
--   `-h, --help`: Show the help message.
+- `-c, --connect`: Go directly to host selection for connecting.
+- `-a, --add`: Go directly to the 'Add a new server' menu.
+- `-p, --port-forward`: Go directly to the 'Port Forwarding' menu.
+- `-l, --list-hosts`: List all configured hosts and exit.
+- `-f, --list-forwards`: List active port forwards and exit.
+- `-t, --test [host|all]`: Test connection to a specific host, all hosts, or show the selection menu.
+- `-h, --help`: Show the help message.
 
 ### `advanced-ssh-manager.sh`
 
--   `-h, --help`: Show the help message.
+- `-h, --help`: Show the help message.
 
 ## 📦 Installation
 
@@ -182,28 +182,68 @@ This project now consists of two scripts:
 - `ssh-manager.sh`: The main script for day-to-day server, key, and port-forwarding management.
 - `advanced-ssh-manager.sh`: A separate script for advanced tasks like backups, import/export, and direct file editing.
 
-1. Download the script(s) you need.
-2. Make it executable:
+1. **Clone the repository:**
 
     ```bash
-    chmod +x ssh-manager.sh
-    chmod +x advanced-ssh-manager.sh
+    git clone https://github.com/iamdanielv/ssh-manager.git
+    cd ssh-manager
     ```
 
-3. Run it:
+2. **Build the standalone scripts:**
+    The source code is in the `src/` directory. A build script is provided to bundle them into standalone executables.
 
     ```bash
-    ./ssh-manager.sh
+    make build
+    ```
+
+    This will create the `ssh-manager.sh` and `advanced-ssh-manager.sh` executables in the `dist/` directory.
+
+3. **Run it:**
+
+    ```bash
+    ./dist/ssh-manager.sh
     # or for advanced tools:
-    ./advanced-ssh-manager.sh
+    ./dist/advanced-ssh-manager.sh
     ```
 
     For convenience, place it in a directory that is in your `PATH` (e.g., `~/.local/bin` or `/usr/local/bin`) to run it from anywhere.
 
     ```bash
     # Example:
-    sudo mv ssh-manager.sh /usr/local/bin/ssh-manager
+    sudo mv dist/ssh-manager.sh /usr/local/bin/ssh-manager
     ssh-manager # Now you can run it like this
+    ```
+
+## 🛠️ Development
+
+This project uses a `Makefile` to streamline common development and build tasks. Run `make` or `make help` to see a list of all available commands.
+
+### Building
+
+- `make build`: Builds the standalone, distributable scripts in the `dist/` directory. This is the recommended way to create the final executables.
+- `make clean`: Removes the `dist/` directory and other build artifacts.
+
+### Testing
+
+- `make test`: Runs the entire test suite located in the `test/` directory.
+
+### Running Scripts
+
+You can run the scripts in two ways:
+
+1. **Development Mode**: Run the scripts directly from the `src/` directory. This is useful for quick testing during development as it doesn't require a build step.
+
+    ```bash
+    make ssh-manager
+    make advanced-ssh-manager
+    make playground
+    ```
+
+2. **Distribution Mode**: Build and then run the final standalone scripts. This is how an end-user would run them.
+
+    ```bash
+    make dist-ssh-manager
+    make dist-advanced-ssh-manager
     ```
 
 ## ⚙️ Dependencies

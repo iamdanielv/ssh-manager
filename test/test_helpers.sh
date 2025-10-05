@@ -89,17 +89,17 @@ initialize_test_environment() {
 
     # Source the libraries first, as the main scripts depend on them.
     local script_dir; script_dir=$(dirname "${BASH_SOURCE[0]}")
-    if ! source "${script_dir}/../lib/tui.lib.sh"; then
-        echo "Error: Could not source lib/tui.lib.sh." >&2
+    if ! source "${script_dir}/../src/lib/tui.lib.sh"; then
+        echo "Error: Could not source src/lib/tui.lib.sh." >&2
         exit 1
     fi
-    if ! source "${script_dir}/../lib/ssh.lib.sh"; then
-        echo "Error: Could not source lib/ssh.lib.sh." >&2
+    if ! source "${script_dir}/../src/lib/ssh.lib.sh"; then
+        echo "Error: Could not source src/lib/ssh.lib.sh." >&2
         exit 1
     fi
 
     # Source the script we are testing. This must be done AFTER setting the env vars and sourcing libs.
-    if ! source "${script_dir}/../${script_to_source}"; then
+    if ! source "${script_dir}/../src/${script_to_source}"; then
         echo "Error: Could not source ${script_to_source}." >&2
         exit 1
     fi

@@ -2,9 +2,9 @@
 # An interactive TUI for managing and connecting to SSH hosts.
 
 # Source the TUI utility library.
-# The script will fail if it is not in the lib/ directory.
+# The script will fail if it is not in the src/lib/ directory.
 if ! source "$(dirname "${BASH_SOURCE[0]}")/lib/tui.lib.sh"; then
-    echo "Error: Could not source lib/tui.lib.sh. Make sure it is in the lib/ directory." >&2
+    echo "Error: Could not source src/lib/tui.lib.sh." >&2
     exit 1
 fi
 
