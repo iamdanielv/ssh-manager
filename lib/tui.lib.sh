@@ -352,7 +352,8 @@ prompt_for_input() {
                 if [[ -n "$input_str" || "$allow_empty" == "true" ]]; then
                     var_ref="$input_str"
                     # On success, clear the input line and the prompt text above it.
-                    clear_current_line >/dev/tty; clear_lines_up "$prompt_lines" >/dev/tty
+                    # We clear `prompt_lines` in total. The current line is one of them.
+                    clear_current_line >/dev/tty; clear_lines_up $(( prompt_lines - 1 )) >/dev/tty
 
                     # --- Print a clean, single-line, truncated summary ---
                     local total_width=70
@@ -370,9 +371,9 @@ prompt_for_input() {
                 ;;
             "$KEY_ESC")
                 # On cancel, clear the input area and show a timed message.
-                clear_current_line >/dev/tty; clear_lines_up "$prompt_lines"
+                # We clear `prompt_lines` in total. The current line is one of them.
+                clear_current_line >/dev/tty; clear_lines_up $(( prompt_lines - 1 )) >/dev/tty
                 show_timed_message "${T_INFO_ICON} Input cancelled." 1
-                sleep 1
                 return 1
                 ;;
             "$KEY_BACKSPACE")
