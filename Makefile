@@ -2,7 +2,7 @@
 # The help comments are based on https://marmelab.com/blog/2016/02/29/auto-documented-makefile.html
 
 .DEFAULT_GOAL := help
-.PHONY: all build clean test ssh-manager advanced-ssh-manager dist-ssh-manager dist-advanced-ssh-manager help
+.PHONY: all build clean test ssh-manager advanced-ssh-manager playground dist-ssh-manager dist-advanced-ssh-manager help
 
 # Color Definitions
 C_BLUE := \033[34m
@@ -15,12 +15,15 @@ SRC_DIR := src
 DIST_DIR := dist
 TEST_DIR := test
 
+BUILD_SCRIPT := ./build.sh
+
 SSH_MANAGER_SRC := $(SRC_DIR)/ssh-manager.sh
 ADVANCED_SSH_MANAGER_SRC := $(SRC_DIR)/advanced-ssh-manager.sh
+PLAYGROUND_SRC := $(SRC_DIR)/interactive-menu-playground.sh
 
 SSH_MANAGER_DIST := $(DIST_DIR)/ssh-manager.sh
 ADVANCED_SSH_MANAGER_DIST := $(DIST_DIR)/advanced-ssh-manager.sh
-
+LIB_FILES := $(wildcard $(SRC_DIR)/lib/*.sh)
 TEST_SCRIPTS := $(wildcard $(TEST_DIR)/test_*.sh)
 
 ##@ General
@@ -35,17 +38,17 @@ all: build ##@ Build all distributable scripts (default if no goal is specified 
 
 build: $(SSH_MANAGER_DIST) $(ADVANCED_SSH_MANAGER_DIST) ##@ Build all distributable scripts
 
-$(SSH_MANAGER_DIST): $(SSH_MANAGER_SRC)
-	@./build.sh $(SSH_MANAGER_SRC)
+$(SSH_MANAGER_DIST): $(SSH_MANAGER_SRC) $(LIB_FILES) $(BUILD_SCRIPT)
+	@$(BUILD_SCRIPT) $(SSH_MANAGER_SRC)
 
-$(ADVANCED_SSH_MANAGER_DIST): $(ADVANCED_SSH_MANAGER_SRC)
-	@./build.sh $(ADVANCED_SSH_MANAGER_SRC)
+$(ADVANCED_SSH_MANAGER_DIST): $(ADVANCED_SSH_MANAGER_SRC) $(LIB_FILES) $(BUILD_SCRIPT)
+	@$(BUILD_SCRIPT) $(ADVANCED_SSH_MANAGER_SRC)
 
 clean: ##@ Remove the dist directory and other build artifacts
 	@echo "Cleaning up..."
 	@rm -rf $(DIST_DIR)
 
-test: ##@ Run all tests
+test: $(SSH_MANAGER_SRC) $(ADVANCED_SSH_MANAGER_SRC) $(LIB_FILES) ##@ Run all tests
 	@echo "Running tests..."
 	@for test_script in $(TEST_SCRIPTS); do \
 		echo; \
@@ -60,6 +63,9 @@ ssh-manager: ##@ Run the development version of ssh-manager
 
 advanced-ssh-manager: ##@ Run the development version of advanced-ssh-manager
 	@$(ADVANCED_SSH_MANAGER_SRC)
+
+playground: ##@ Run the interactive menu playground script
+	@$(PLAYGROUND_SRC)
 
 ##@ Distribution
 
